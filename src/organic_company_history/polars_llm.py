@@ -68,21 +68,40 @@ class PolarsLLM:
     def generate_data(self) -> pl.DataFrame:
         errors = []
         while len(errors) <= DEFAULT_MAX_ATTEMPTS:
-            content = ollama.chat(
+            response = ollama.chat(
                 model=self.name,
                 messages=[{"role": "user", "content": self.make_message_content()}],
             )["message"]["content"]
 
+            missing, extra = self.get_missing_and_extra_cols_in_response(response)
+
+            if missing:
+                # TODO: feedback to LLM and ask to regenerate
+                raise ValueError(f"Missing the following columns: {missing}!")
+
             try:
-                return polars_from_csv_string(content)
+                return polars_from_csv_string(response)
             except Exception as e:
-                # TODO: feedback errors into LLM and ask to regenerate?
+                # TODO: feedback errors into LLM and ask to regenerate
                 errors.append(e)
                 pass
 
         raise Exception(
             f"Could not generate data after {len(errors)} attempts!:\n{errors}"
         )
+
+    def get_missing_and_extra_cols_in_response(
+        self, response: str
+    ) -> tuple[set[str], set[str]]:
+        response_cols: set[str] = set(
+            response.split("\n")[0].replace('"', "").split(",")
+        )
+        expected_cols: set[str] = set(self.schema.to_schema().columns.keys())
+
+        missing = expected_cols - response_cols
+        extra = response_cols - expected_cols
+
+        return missing, extra
 
 
 def format_modelfile(base_model: str, system_msg: str) -> str:
@@ -92,7 +111,9 @@ def format_modelfile(base_model: str, system_msg: str) -> str:
 def polars_from_csv_string(csv_string: str) -> pl.DataFrame:
     bytes_data = BytesIO(bytes(csv_string.strip(), "utf-8"))
 
-    return pl.read_csv(bytes_data).select(
+    raw_df = pl.read_csv(bytes_data)
+
+    return raw_df.with_columns(
         cs.string().map_batches(lambda s: s.str.strip_chars(" '\""))
     )
 
