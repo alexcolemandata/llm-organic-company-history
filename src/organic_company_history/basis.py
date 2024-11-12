@@ -51,7 +51,6 @@ class PayrollExpert(PolarsLLM):
         )
 
     def parse_response(self, response: pl.DataFrame) -> pl.DataFrame:
-        breakpoint()
         result = response.with_columns(pl.col("payroll_run_date").str.to_date())
 
         return result.pipe(self.schema, lazy=True)
