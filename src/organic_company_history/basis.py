@@ -5,7 +5,7 @@ from pandera.polars import DataFrameModel
 
 from .polars_llm import PolarsLLM
 
-NUM_EMPLOYEES = 10
+NUM_EMPLOYEES = 5
 
 
 class HR(DataFrameModel):
@@ -44,14 +44,16 @@ class HRExpert(PolarsLLM):
 
 
 class PayrollExpert(PolarsLLM):
-    def make_message_content(self) -> str:
+    def make_message_content(
+        self, employee_code: str, contract_type: str, job_title: str
+    ) -> str:
         return (
-            f"Generate one month's worth of payroll data for {NUM_EMPLOYEES} "
-            "different employees"
+            f"Generate one week's worth of payroll data for the following employee: "
+            f"{employee_code=}, {contract_type=}, {job_title=}"
         )
 
     def parse_response(self, response: pl.DataFrame) -> pl.DataFrame:
-        result = response.with_columns(pl.col("payroll_run_date").str.to_date())
+        result = response.with_columns(pl.col("payroll_run_date").str.to_datetime())
 
         return result.pipe(self.schema, lazy=True)
 
@@ -64,7 +66,16 @@ payroll_expert = PayrollExpert(
 )
 
 hr_data = hr_expert.get_dataframe()
-payroll_data = payroll_expert.get_dataframe()
 
 print(f"\n\nhr_data:\n{hr_data}")
+
+payroll_data = pl.concat(
+    payroll_expert.get_dataframe(
+        employee_code=row["employee_code"],
+        contract_type=row["contract_type"],
+        job_title=row["job_title"],
+    )
+    for row in hr_data.rows(named=True)
+)
+
 print(f"\n\npayroll_data:\n{payroll_data}")

@@ -55,32 +55,34 @@ class PolarsLLM:
 
         return format_modelfile(base_model=self.base_model, system_msg=system_msg)
 
-    def make_message_content(self) -> str:
+    def make_message_content(self, **kwargs) -> str:
         raise NotImplementedError("This method needs to be defined per subclass")
 
-    def get_dataframe(self) -> pl.DataFrame:
-        base_df = self.generate_data()
-        return self.parse_response(base_df)
+    def get_dataframe(self, **kwargs) -> pl.DataFrame:
+        return self.generate_data(**kwargs)
 
     def parse_response(self, response: pl.DataFrame) -> pl.DataFrame:
         raise NotImplementedError("This method needs to be defined per subclass")
 
-    def generate_data(self) -> pl.DataFrame:
+    def generate_data(self, **kwargs) -> pl.DataFrame:
         errors = []
         while len(errors) <= DEFAULT_MAX_ATTEMPTS:
             response = ollama.chat(
                 model=self.name,
-                messages=[{"role": "user", "content": self.make_message_content()}],
+                messages=[
+                    {"role": "user", "content": self.make_message_content(**kwargs)}
+                ],
             )["message"]["content"]
 
             missing, extra = self.get_missing_and_extra_cols_in_response(response)
 
             if missing:
                 # TODO: feedback to LLM and ask to regenerate
-                raise ValueError(f"Missing the following columns: {missing}!")
+                errors.append(ValueError(f"Missing the following columns: {missing}!"))
+                pass
 
             try:
-                return polars_from_csv_string(response)
+                return self.parse_response(polars_from_csv_string(response))
             except Exception as e:
                 # TODO: feedback errors into LLM and ask to regenerate
                 errors.append(e)
