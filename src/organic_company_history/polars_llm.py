@@ -27,6 +27,7 @@ class PolarsLLM:
     expertise: str
     schema: Type[DataFrameModel]
     response_parser: Callable[[pl.DataFrame], pl.DataFrame]
+    messenger: Callable[..., str]
 
     modelfile: str
 
@@ -35,6 +36,7 @@ class PolarsLLM:
         name: str,
         expertise: str,
         schema: Type[DataFrameModel],
+        message: str | Callable[[], str],
         response_parser: Callable[[pl.DataFrame], pl.DataFrame] | None = None,
         base_model: str = DEFAULT_BASE_MODEL,
     ):
@@ -47,6 +49,11 @@ class PolarsLLM:
             self.response_parser = lambda df: df
         else:
             self.response_parser = response_parser
+
+        if isinstance(message, str):
+            self.messenger = lambda: message
+        else:
+            self.messenger = message
 
         self.modelfile = self.make_modelfile()
 
@@ -65,9 +72,6 @@ class PolarsLLM:
 
         return format_modelfile(base_model=self.base_model, system_msg=system_msg)
 
-    def make_message_content(self, **kwargs) -> str:
-        raise NotImplementedError("This method needs to be defined per subclass")
-
     def get_dataframe(self, **kwargs) -> pl.DataFrame:
         return self.generate_data(**kwargs)
 
@@ -79,9 +83,7 @@ class PolarsLLM:
         while len(errors) <= DEFAULT_MAX_ATTEMPTS:
             response = ollama.chat(
                 model=self.name,
-                messages=[
-                    {"role": "user", "content": self.make_message_content(**kwargs)}
-                ],
+                messages=[{"role": "user", "content": self.messenger(**kwargs)}],
             )["message"]["content"]
 
             missing, extra = self.get_missing_and_extra_cols_in_response(response)
