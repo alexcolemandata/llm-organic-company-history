@@ -43,21 +43,6 @@ class PayrollDefinitions(DataFrameModel):
         coerce = True
 
 
-class HRExpert(PolarsLLM):
-    def make_message_content(self) -> str:
-        return f"Generate data for {NUM_EMPLOYEES} employees for a knitting company"
-
-
-class PayCodeDefinitionsExpert(PolarsLLM):
-    def make_message_content(self) -> str:
-        return (
-            "Generate a paycode mapping file that we can use to set up a "
-            "payroll system for a knitting company. This should include all paycodes "
-            "we would expect to pay to our employees. Different leave types should use "
-            f"different paycodes. There should be at least {MIN_UNIQUE_PAYCODES} different paycodes."
-        )
-
-
 class PayrollExpert(PolarsLLM):
     def make_message_content(
         self, employee_code: str, contract_type: str, job_title: str
@@ -68,27 +53,42 @@ class PayrollExpert(PolarsLLM):
         )
 
 
-hr_expert = HRExpert(
+hr_expert = PolarsLLM(
     name="ac-knitting-hr",
     expertise="Knitting and HR data",
     schema=HR,
     response_parser=lambda df: df.with_columns(pl.col("hire_date").str.to_date()),
+    message=f"Generate data for {NUM_EMPLOYEES} employees for a knitting company",
 )
 
-paycode_definitions_expert = PayCodeDefinitionsExpert(
+paycode_definitions_expert = PolarsLLM(
     name="ac-knitting-paycode",
     expertise="Payroll Systems and Administration",
     schema=PayrollDefinitions,
+    message=(
+        "Generate a paycode mapping file that we can use to set up a "
+        "payroll system for a knitting company. This should include all paycodes "
+        "we would expect to pay to our employees. Different leave types should use "
+        f"different paycodes. There should be at least {MIN_UNIQUE_PAYCODES} different paycodes."
+    ),
 )
 
 
-payroll_expert = PayrollExpert(
+def make_payroll_message(employee_code: str, contract_type: str, job_title: str) -> str:
+    return (
+        f"Generate one week's worth of payroll data for the following employee: "
+        f"{employee_code=}, {contract_type=}, {job_title=}"
+    )
+
+
+payroll_expert = PolarsLLM(
     name="ac-knitting-payroll",
     expertise="Payroll and Knitting",
     schema=Payroll,
     response_parser=lambda df: df.with_columns(
         pl.col("payroll_run_date").str.to_datetime()
     ),
+    message=make_payroll_message,
 )
 
 hr_data = hr_expert.get_dataframe()
