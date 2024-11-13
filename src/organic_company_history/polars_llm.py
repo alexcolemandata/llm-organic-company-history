@@ -17,6 +17,7 @@ SYSTEM_MESSAGE_CSV_REQS = (
     "Don't include any text that is not part of the CSV. "
     "All dates should be in YYYY-MM-DD format. "
     "Ensure all fields have values. "
+    "Boolean fields should use the values true and false. "
 )
 
 
@@ -34,14 +35,18 @@ class PolarsLLM:
         name: str,
         expertise: str,
         schema: Type[DataFrameModel],
-        response_parser: Callable[[pl.DataFrame], pl.DataFrame],
+        response_parser: Callable[[pl.DataFrame], pl.DataFrame] | None = None,
         base_model: str = DEFAULT_BASE_MODEL,
     ):
         self.name = name
         self.schema = schema
         self.expertise = expertise
         self.base_model = base_model
-        self.response_parser = response_parser
+
+        if response_parser is None:
+            self.response_parser = lambda df: df
+        else:
+            self.response_parser = response_parser
 
         self.modelfile = self.make_modelfile()
 
