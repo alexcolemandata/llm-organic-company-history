@@ -36,7 +36,7 @@ class PolarsLLM:
         name: str,
         expertise: str,
         schema: Type[DataFrameModel],
-        message: str | Callable[[], str],
+        message: str | Callable[..., str],
         response_parser: Callable[[pl.DataFrame], pl.DataFrame] | None = None,
         base_model: str = DEFAULT_BASE_MODEL,
     ):
