@@ -37,11 +37,6 @@ class HRExpert(PolarsLLM):
     def make_message_content(self) -> str:
         return f"Generate data for {NUM_EMPLOYEES} employees for a knitting company"
 
-    def parse_response(self, response: pl.DataFrame) -> pl.DataFrame:
-        result = response.with_columns(pl.col("hire_date").str.to_date())
-
-        return result.pipe(self.schema, lazy=True)
-
 
 class PayrollExpert(PolarsLLM):
     def make_message_content(
@@ -52,17 +47,22 @@ class PayrollExpert(PolarsLLM):
             f"{employee_code=}, {contract_type=}, {job_title=}"
         )
 
-    def parse_response(self, response: pl.DataFrame) -> pl.DataFrame:
-        result = response.with_columns(pl.col("payroll_run_date").str.to_datetime())
 
-        return result.pipe(self.schema, lazy=True)
-
-
-hr_expert = HRExpert(name="ac-knitting-hr", expertise="Knitting and HR data", schema=HR)
+hr_expert = HRExpert(
+    name="ac-knitting-hr",
+    expertise="Knitting and HR data",
+    schema=HR,
+    response_parser=lambda df: df.with_columns(pl.col("hire_date").str.to_date()),
+)
 
 
 payroll_expert = PayrollExpert(
-    name="ac-knitting-payroll", expertise="Payroll and Knitting", schema=Payroll
+    name="ac-knitting-payroll",
+    expertise="Payroll and Knitting",
+    schema=Payroll,
+    response_parser=lambda df: df.with_columns(
+        pl.col("payroll_run_date").str.to_datetime()
+    ),
 )
 
 hr_data = hr_expert.get_dataframe()

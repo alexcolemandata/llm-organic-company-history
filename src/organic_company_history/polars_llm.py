@@ -1,10 +1,11 @@
-from typing import Type
+from typing import Type, Callable
 import ollama
 import string
 import polars as pl
 from io import BytesIO
 import pandera as pa
 from pandera.typing import DataFrame, Series
+from pandera.polars import DataFrameModel
 import polars.selectors as cs
 
 
@@ -23,7 +24,8 @@ class PolarsLLM:
     name: str
     base_model: str
     expertise: str
-    schema: Type[pa.DataFrameModel]
+    schema: Type[DataFrameModel]
+    response_parser: Callable[[pl.DataFrame], pl.DataFrame]
 
     modelfile: str
 
@@ -31,13 +33,16 @@ class PolarsLLM:
         self,
         name: str,
         expertise: str,
-        schema: Type[pa.DataFrameModel],
+        schema: Type[DataFrameModel],
+        response_parser: Callable[[pl.DataFrame], pl.DataFrame],
         base_model: str = DEFAULT_BASE_MODEL,
     ):
         self.name = name
         self.schema = schema
         self.expertise = expertise
         self.base_model = base_model
+        self.response_parser = response_parser
+
         self.modelfile = self.make_modelfile()
 
         ollama.create(model=name, modelfile=self.modelfile)
@@ -62,7 +67,7 @@ class PolarsLLM:
         return self.generate_data(**kwargs)
 
     def parse_response(self, response: pl.DataFrame) -> pl.DataFrame:
-        raise NotImplementedError("This method needs to be defined per subclass")
+        return self.response_parser(response).pipe(self.schema)
 
     def generate_data(self, **kwargs) -> pl.DataFrame:
         errors = []
@@ -120,7 +125,7 @@ def polars_from_csv_string(csv_string: str) -> pl.DataFrame:
     )
 
 
-def format_pandera_model_as_instruction(model: Type[pa.DataFrameModel]) -> str:
+def format_pandera_model_as_instruction(model: Type[DataFrameModel]) -> str:
     dtypes = model.to_schema().dtypes
     result = "; ".join(
         [
