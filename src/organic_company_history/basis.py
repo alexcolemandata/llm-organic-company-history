@@ -43,16 +43,6 @@ class PayrollDefinitions(DataFrameModel):
         coerce = True
 
 
-class PayrollExpert(PolarsLLM):
-    def make_message_content(
-        self, employee_code: str, contract_type: str, job_title: str
-    ) -> str:
-        return (
-            f"Generate one week's worth of payroll data for the following employee: "
-            f"{employee_code=}, {contract_type=}, {job_title=}"
-        )
-
-
 hr_expert = PolarsLLM(
     name="ac-knitting-hr",
     expertise="Knitting and HR data",
@@ -73,14 +63,6 @@ paycode_definitions_expert = PolarsLLM(
     ),
 )
 
-
-def make_payroll_message(employee_code: str, contract_type: str, job_title: str) -> str:
-    return (
-        f"Generate one week's worth of payroll data for the following employee: "
-        f"{employee_code=}, {contract_type=}, {job_title=}"
-    )
-
-
 payroll_expert = PolarsLLM(
     name="ac-knitting-payroll",
     expertise="Payroll and Knitting",
@@ -88,15 +70,16 @@ payroll_expert = PolarsLLM(
     response_parser=lambda df: df.with_columns(
         pl.col("payroll_run_date").str.to_datetime()
     ),
-    message=make_payroll_message,
+    message=lambda employee_code, contract_type, job_title: (
+        f"Generate one week's worth of payroll data for the following employee: "
+        f"{employee_code=}, {contract_type=}, {job_title=}"
+    ),
 )
 
 hr_data = hr_expert.get_dataframe()
-
 print(f"\n\nhr_data:\n{hr_data}")
 
 paycode_data = paycode_definitions_expert.get_dataframe()
-
 print(f"\n\npaycode_data:\n{paycode_data}")
 
 payroll_data = pl.concat(
@@ -107,5 +90,4 @@ payroll_data = pl.concat(
     )
     for row in hr_data.rows(named=True)
 )
-
 print(f"\n\npayroll_data:\n{payroll_data}")
