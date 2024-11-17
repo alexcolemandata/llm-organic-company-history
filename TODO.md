@@ -10,4 +10,5 @@
 
 ## Experiment With
 
--   [ ] **tools**
+-   [x] tools - Completed: added basic api for defining tools (parsing docstring is a bit cheesy tho)
+
