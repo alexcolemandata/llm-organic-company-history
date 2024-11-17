@@ -1,4 +1,4 @@
-from typing import Type, Callable
+from typing import Type, Callable, Any
 import ollama
 import string
 import polars as pl
@@ -26,7 +26,7 @@ class PolarsLLM:
     base_model: str
     expertise: str
     schema: Type[DataFrameModel]
-    response_parser: Callable[[pl.DataFrame], pl.DataFrame]
+    reply_parser: Callable[[pl.DataFrame], pl.DataFrame]
     messenger: Callable[..., str]
 
     modelfile: str
@@ -37,7 +37,7 @@ class PolarsLLM:
         expertise: str,
         schema: Type[DataFrameModel],
         message: str | Callable[..., str],
-        response_parser: Callable[[pl.DataFrame], pl.DataFrame] | None = None,
+        reply_parser: Callable[[pl.DataFrame], pl.DataFrame] | None = None,
         base_model: str = DEFAULT_BASE_MODEL,
     ):
         self.name = name
@@ -45,10 +45,10 @@ class PolarsLLM:
         self.expertise = expertise
         self.base_model = base_model
 
-        if response_parser is None:
-            self.response_parser = lambda df: df
+        if reply_parser is None:
+            self.reply_parser = lambda df: df
         else:
-            self.response_parser = response_parser
+            self.reply_parser = reply_parser
 
         if isinstance(message, str):
             self.messenger = lambda: message
@@ -75,18 +75,23 @@ class PolarsLLM:
     def get_dataframe(self, **kwargs) -> pl.DataFrame:
         return self.generate_data(**kwargs)
 
-    def parse_response(self, response: pl.DataFrame) -> pl.DataFrame:
-        return self.response_parser(response).pipe(self.schema)
+    def parse_reply(self, reply: pl.DataFrame) -> pl.DataFrame:
+        return self.reply_parser(reply).pipe(self.schema)
 
     def generate_data(self, **kwargs) -> pl.DataFrame:
         errors = []
+        message = self.messenger(**kwargs)
         while len(errors) <= DEFAULT_MAX_ATTEMPTS:
             response = ollama.chat(
                 model=self.name,
-                messages=[{"role": "user", "content": self.messenger(**kwargs)}],
-            )["message"]["content"]
+                messages=[{"role": "user", "content": message}],
+            )
+            reply = response["message"]["content"]
 
-            missing, extra = self.get_missing_and_extra_cols_in_response(response)
+            missing, extra = self.get_missing_and_extra_cols_in_reply(reply)
+
+            if missing or extra:
+                breakpoint()
 
             if missing:
                 # TODO: feedback to LLM and ask to regenerate
@@ -94,8 +99,9 @@ class PolarsLLM:
                 pass
 
             try:
-                return self.parse_response(polars_from_csv_string(response))
+                return self.parse_reply(polars_from_csv_string(reply))
             except Exception as e:
+                breakpoint()
                 # TODO: feedback errors into LLM and ask to regenerate
                 errors.append(e)
                 pass
@@ -104,16 +110,14 @@ class PolarsLLM:
             f"Could not generate data after {len(errors)} attempts!:\n{errors}"
         )
 
-    def get_missing_and_extra_cols_in_response(
-        self, response: str
+    def get_missing_and_extra_cols_in_reply(
+        self, reply: str
     ) -> tuple[set[str], set[str]]:
-        response_cols: set[str] = set(
-            response.split("\n")[0].replace('"', "").split(",")
-        )
+        reply_cols: set[str] = set(reply.split("\n")[0].replace('"', "").split(","))
         expected_cols: set[str] = set(self.schema.to_schema().columns.keys())
 
-        missing = expected_cols - response_cols
-        extra = response_cols - expected_cols
+        missing = expected_cols - reply_cols
+        extra = reply_cols - expected_cols
 
         return missing, extra
 

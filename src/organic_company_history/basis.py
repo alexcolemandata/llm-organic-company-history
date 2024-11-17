@@ -1,6 +1,7 @@
 """python -m organic_company_history.basis"""
 import polars as pl
 import pandera as pa
+from pandera.typing import DataFrame
 from pandera.polars import DataFrameModel
 
 from .polars_llm import PolarsLLM
@@ -23,12 +24,9 @@ class HR(DataFrameModel):
 
 
 class Payroll(DataFrameModel):
-    employee_code: pa.String
     pay_code: pa.String
-    pay_code_description: pa.String
-    hours: float
-    amount: float
-    payroll_run_date: pa.Timestamp
+    hours: float = pa.Field(nullable=True)
+    amount: float = pa.Field(nullable=True)
 
     class Config:
         coerce = True
@@ -43,11 +41,16 @@ class PayrollDefinitions(DataFrameModel):
         coerce = True
 
 
+def format_paycode_data_as_listing(df: DataFrame[PayrollDefinitions]) -> str:
+    """Formats the paycode data as a string to be used as part of an LLM query."""
+    return str().join("\n    - " + df["pay_code"] + ": " + df["pay_code_description"])
+
+
 hr_expert = PolarsLLM(
     name="ac-knitting-hr",
     expertise="Knitting and HR data",
     schema=HR,
-    response_parser=lambda df: df.with_columns(pl.col("hire_date").str.to_date()),
+    reply_parser=lambda df: df.with_columns(pl.col("hire_date").str.to_date()),
     message=f"Generate data for {NUM_EMPLOYEES} employees for a knitting company",
 )
 
@@ -67,12 +70,14 @@ payroll_expert = PolarsLLM(
     name="ac-knitting-payroll",
     expertise="Payroll and Knitting",
     schema=Payroll,
-    response_parser=lambda df: df.with_columns(
-        pl.col("payroll_run_date").str.to_datetime()
+    reply_parser=lambda df: df.with_columns(
+        pl.col("hours").cast(pl.Float64, strict=False),
+        pl.col("amount").cast(pl.Float64, strict=False),
     ),
-    message=lambda employee_code, contract_type, job_title: (
-        f"Generate one week's worth of payroll data for the following employee: "
-        f"{employee_code=}, {contract_type=}, {job_title=}"
+    message=lambda contract_type, job_title, paycode_listing: (
+        f"Generate a single monthly payrun for an employee with "
+        f"{contract_type=}, {job_title=}.\n\nThe payroll codes "
+        f"and description (split by category) are as follows:\n{paycode_listing}"
     ),
 )
 
@@ -82,12 +87,14 @@ print(f"\n\nhr_data:\n{hr_data}")
 paycode_data = paycode_definitions_expert.get_dataframe()
 print(f"\n\npaycode_data:\n{paycode_data}")
 
-payroll_data = pl.concat(
+payroll_dfs = [
     payroll_expert.get_dataframe(
-        employee_code=row["employee_code"],
         contract_type=row["contract_type"],
         job_title=row["job_title"],
-    )
+        paycode_listing=format_paycode_data_as_listing(paycode_data),
+    ).with_columns(pl.lit(row["employee_code"]).alias("employee_code"))
     for row in hr_data.rows(named=True)
-)
+]
+
+payroll_data = pl.concat(payroll_dfs)
 print(f"\n\npayroll_data:\n{payroll_data}")
