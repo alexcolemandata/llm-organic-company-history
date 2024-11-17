@@ -9,6 +9,7 @@ from .polars_llm import PolarsLLM
 NUM_EMPLOYEES = 5
 MIN_UNIQUE_PAYCODES = 10
 MIN_UNIQUE_TIMECODES = 8
+MIN_PRODUCTS = 30
 FTE_HOURS_PER_WEEK = 35
 
 
@@ -53,6 +54,14 @@ class Timesheets(DataFrameModel):
     weekday: pa.String
     time_code: pa.String
     hours: float
+
+
+class ProductLine(DataFrameModel):
+    product_category: pa.String
+    product_name: pa.String
+    product_description: pa.String
+    price: float
+    cost_materials: float
 
 
 def format_code_description_as_listing(
@@ -128,11 +137,23 @@ payroll_expert = PolarsLLM(
     ),
 )
 
+product_expert = PolarsLLM(
+    name="ac-knitting-product",
+    expertise="E-Commerce, Knitting, eBay",
+    schema=ProductLine,
+    questioner=(
+        "Generate a variety of products our knitting company can sell on our "
+        "website and eBay store. It should have a good mix of different items, styles "
+        f" and themes. Generate at least {MIN_PRODUCTS} different products."
+    ),
+)
+
 print("\n\ngenerating hr_data...")
 hr_data = hr_expert.get_dataframe().with_columns(
     pl.col("fte").mul(FTE_HOURS_PER_WEEK).alias("weekly_hours")
 )
 print(hr_data)
+
 
 print("\n\ngenerating paycode_data...")
 paycode_data = paycode_definitions_expert.get_dataframe()
@@ -145,7 +166,6 @@ timesheet_codes = timesheet_admin.get_dataframe(
 print(timesheet_codes)
 
 print("\n\ngenerating timesheets...")
-
 timesheet_dfs = [
     (
         timesheeter.get_dataframe(
@@ -180,3 +200,8 @@ payroll_dfs = [
 ]
 payroll_data = pl.concat(payroll_dfs)
 print(payroll_data)
+
+
+print("\n\ngenerating product_line...")
+product_line = product_expert.get_dataframe()
+print(product_line)
