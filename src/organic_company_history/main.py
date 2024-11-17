@@ -1,11 +1,16 @@
-"""Generate data for a few silly industries"""
-from .basis import make_data_for_industry
+"""Generate and print data for a few silly industries"""
+from os import get_terminal_size
 
-print(f"\n\n\nGenerating data for big game hunting:\n")
-big_game_hunting = make_data_for_industry("big game hunting")
+from .basis import make_data_for_industry, GeneratedData
 
-print(f"\n\n\nGenerating data for interstellar coffee delivery:\n")
-big_game_hunting = make_data_for_industry("interstellar coffee delivery")
+HLINE = "-" * get_terminal_size().columns
 
-print(f"\n\n\nGenerating data for knitting:\n")
-knitting_data = make_data_for_industry("knitting")
+
+def demo(industry: str) -> GeneratedData:
+    print(f"\n{HLINE}\nGenerating data for {industry.title()}:\n")
+    return make_data_for_industry(industry)
+
+
+knitting = demo("occult detective agency")
+space_coffee = demo("interstellar coffee delivery")
+knitting = demo("knitting")
