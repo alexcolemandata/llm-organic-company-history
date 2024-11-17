@@ -193,13 +193,14 @@ class PolarsLLM:
                 "content": answer,
             })
 
-            response = ollama.chat(
-                model=self.name,
-                messages=self.message_history,
-            )
+        response = ollama.chat(
+            model=self.name,
+            messages=self.message_history,
+        )
 
-            self.message_history.append(response)
-            return response
+        self.message_history.append(response)
+
+        return response
 
 
     @property
