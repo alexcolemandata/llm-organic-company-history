@@ -2,6 +2,8 @@
 import polars as pl
 import pandera as pa
 from typing import NamedTuple
+from functools import lru_cache
+import random
 from pandera.typing import DataFrame
 from pandera.polars import DataFrameModel
 
@@ -97,6 +99,30 @@ def make_data_for_industry(industry: str) -> GeneratedData:
     return data
 
 
+@lru_cache()
+def get_typical_monthly_salary_for_job_title(job_title: str) -> int:
+    """Get the typical monthly salary for a given job title
+
+    Args:
+        job_title (string): the job to get the monthly salary for
+    """
+    return random.randrange(start=2000, stop=30000)
+
+
+@lru_cache
+def get_number_of_hours_worked_for_day(
+    weekday: str, job_title: str, time_code: str
+) -> int:
+    """Get the number of hours that `job_title` worked for a given `weekday`
+
+    Args:
+        weekday (string): the day of the week to get hours worked
+        job_title (string): the job title to get hours worked
+        time_code (string): the time code that hours were logged against
+    """
+    return random.randrange(start=0, stop=16)
+
+
 def init_experts(industry: str) -> Experts:
     name_prefix = f"user/{industry.replace(' ','-')}"
     return Experts(
@@ -151,6 +177,7 @@ def init_experts(industry: str) -> Experts:
                 "separate rows. "
                 "There should be no more than 12 hours total each day."
             ),
+            tools=[get_number_of_hours_worked_for_day],
         ),
         payroll_data_entry=PolarsLLM(
             name=f"{name_prefix}/payroll-peon",
@@ -167,6 +194,7 @@ def init_experts(industry: str) -> Experts:
                 f"Only use pay_codes from the following list:\n{paycode_listing}"
                 "Avoid having multiple rows with the same 'pay_code' or 'amount' values"
             ),
+            tools=[get_typical_monthly_salary_for_job_title],
         ),
         product_expert=PolarsLLM(
             name=f"{name_prefix}/product",
@@ -194,6 +222,27 @@ def generate_data(experts: Experts) -> GeneratedData:
     payroll_definitions = experts.payroll_admin.get_dataframe()
     print(payroll_definitions)
 
+    print("\n\ngenerating payroll...")
+    payroll_dfs = [
+        (
+            experts.payroll_data_entry.get_dataframe(
+                contract_type=row["contract_type"],
+                job_title=row["job_title"],
+                weekly_hours=row["weekly_hours"],
+                paycode_listing=format_code_description_as_listing(
+                    payroll_definitions,
+                    code="pay_code",
+                    description="pay_code_description",
+                ),
+            ).with_columns(
+                pl.lit(row["employee_code"]).alias("employee_code"),
+            )
+        )
+        for row in hr.rows(named=True)
+    ]
+    payroll = pl.concat(payroll_dfs)
+    print(payroll)
+
     print("\n\ngenerating timesheet_codes...")
     timesheet_codes = experts.timesheet_admin.get_dataframe(
         job_titles=",".join(hr["job_title"])
@@ -217,27 +266,6 @@ def generate_data(experts: Experts) -> GeneratedData:
     ]
     timesheets = pl.concat(timesheet_dfs)
     print(timesheets)
-
-    print("\n\ngenerating payroll...")
-    payroll_dfs = [
-        (
-            experts.payroll_data_entry.get_dataframe(
-                contract_type=row["contract_type"],
-                job_title=row["job_title"],
-                weekly_hours=row["weekly_hours"],
-                paycode_listing=format_code_description_as_listing(
-                    payroll_definitions,
-                    code="pay_code",
-                    description="pay_code_description",
-                ),
-            ).with_columns(
-                pl.lit(row["employee_code"]).alias("employee_code"),
-            )
-        )
-        for row in hr.rows(named=True)
-    ]
-    payroll = pl.concat(payroll_dfs)
-    print(payroll)
 
     print("\n\ngenerating products...")
     products = experts.product_expert.get_dataframe()
