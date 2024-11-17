@@ -145,7 +145,8 @@ def init_experts(industry: str) -> Experts:
                 f"{weekly_hours} per week. "
                 "The 'weekday' column should use values like 'Monday', 'Tuesday', "
                 "'Saturday', etc. "
-                f"Only use time_codes from the following list: \n{time_codes}"
+                f"Only use time_codes from the following list: \n{time_codes} "
+                "Do not include the description in the 'time_code' field. "
                 "If an employee works multiple time codes in one day, they should be on "
                 "separate rows. "
                 "There should be no more than 12 hours total each day."
@@ -175,6 +176,7 @@ def init_experts(industry: str) -> Experts:
                 f"Generate a variety of products our {industry} company can sell on our "
                 "website and eBay store. It should have a good mix of different items, styles "
                 " and themes. The 'product_description' field should be kept to one sentence. "
+                "Each product_category should have more than one product. "
                 f"Generate at least {MIN_PRODUCTS} different products."
             ),
         ),
