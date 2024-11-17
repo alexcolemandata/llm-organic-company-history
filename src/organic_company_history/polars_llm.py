@@ -180,13 +180,17 @@ class PolarsLLM:
 
     def use_tools(self, calls=list[dict]) -> Message:
         for call in calls:
-            func = self.tools[call["function"]["name"]]
+            try:
+                func = self.tools[call["function"]["name"]]
+            except KeyError:
+                continue
+
             kwargs = call["function"]["arguments"]
 
             answer = str(func(**kwargs))
 
             formatted_kwargs = ", ".join([f"{kwarg}={repr(value)}" for kwarg, value in kwargs.items()])
-            print(f"{self.name} tool: {func.__name__}({formatted_kwargs}): {answer}")
+            print(f"used tool: {func.__name__}({formatted_kwargs}): {answer}")
 
             self.message_history.append({
                 "role": "tool",
