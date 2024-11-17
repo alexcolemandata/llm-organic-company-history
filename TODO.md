@@ -8,6 +8,7 @@
 -   [ ] fix typing hell with pandera schemas/etc
     -   [ ] convert pandera to object-based api
 -   [ ] use same model for multiple experts, (maintain separate message histories)
+-   [ ] feedback api, for refining results via deterministic functions
 
 ## Experiment With
 
