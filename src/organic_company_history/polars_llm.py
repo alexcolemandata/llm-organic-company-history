@@ -186,6 +186,9 @@ class PolarsLLM:
                 continue
 
             kwargs = call["function"]["arguments"]
+            if not isinstance(kwargs, dict):
+                breakpoint()
+                continue
 
             answer = str(func(**kwargs))
 
