@@ -131,21 +131,27 @@ class PolarsLLM:
             while num_corrections <= DEFAULT_MAX_CORRECTIONS:
                 response = self.send_chat_message(question)
                 response_message = response["message"]
-                reply = response_message["content"]
+                reply = format_first_line_of_csv(response_message["content"])
 
                 column_check = self.check_reply_columns(reply)
 
                 if not column_check.correct:
-                    # errors.append(CSVFormatError("No columns correct", column_check=column_check))
                     question = (
-                        f"Column names were missing, expected: {self.schema_cols}"
+                        "That didn't include any valid column names in the first row. "
+                        f"Expected: {self.schema_cols}"
                     )
                     num_corrections += 1
                     continue
 
                 if column_check.missing:
-                    # errors.append(CSVFormatError("Missing columns", column_check=column_check))
-                    breakpoint()
+                    question = (
+                        f"The following column names were not found in the first row: {column_check.missing}. "
+                    )
+
+                    if column_check.extra:
+                        question += f"Additionally the following column names were not recognized: {column_check.extra}"
+
+                    num_corrections += 1
                     continue
 
                 try:
@@ -165,7 +171,7 @@ class PolarsLLM:
         return set(self.schema.to_schema().columns.keys())
 
     def check_reply_columns(self, reply: str) -> ColumnCheck:
-        reply_cols: set[str] = set(reply.lower().split("\n")[0].replace('"', "").split(","))
+        reply_cols: set[str] = set(reply.lower().split("\n")[0].split(","))
         expected_cols = self.schema_cols
 
         return ColumnCheck(
@@ -180,11 +186,6 @@ def format_modelfile(base_model: str, system_msg: str) -> str:
 
 
 def polars_from_csv_string(csv_string: str) -> pl.DataFrame:
-
-    # make first row lowercase as the column names are there
-    first_line, newline, rest = csv_string.partition("\n")
-    csv_string = first_line.lower() + newline + rest
-
     bytes_data = BytesIO(bytes(csv_string.strip(), "utf-8"))
 
     raw_df = pl.read_csv(bytes_data)
@@ -204,3 +205,8 @@ def format_pandera_model_as_instruction(model: Type[DataFrameModel]) -> str:
     )
 
     return result
+
+def format_first_line_of_csv(csv_string: str) -> str:
+    """Formats the first line to be lower_case_with_underscores - fixes some easy mistakes"""
+    first_line, newline, rest = csv_string.partition("\n")
+    return first_line.lower().strip().replace(" ", "_").replace('"', "") + newline + rest
