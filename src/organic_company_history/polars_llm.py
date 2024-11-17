@@ -16,7 +16,8 @@ SYSTEM_MESSAGE_CSV_REQS = (
     "Provide responses as 'csv' format only. "
     "Don't include any text that is not part of the CSV. "
     "All dates should be in YYYY-MM-DD format. "
-    "Ensure all fields have values. "
+    "Ensure all fields have values. There should be no consecutive commas. "
+    "Ensure all values are able to be coerced into that field's data type. "
     "Boolean fields should use the values true and false. "
 )
 
@@ -90,21 +91,17 @@ class PolarsLLM:
 
             missing, extra = self.get_missing_and_extra_cols_in_reply(reply)
 
-            if missing or extra:
-                breakpoint()
-
             if missing:
                 # TODO: feedback to LLM and ask to regenerate
                 errors.append(ValueError(f"Missing the following columns: {missing}!"))
-                pass
+                continue
 
             try:
                 return self.parse_reply(polars_from_csv_string(reply))
             except Exception as e:
-                breakpoint()
                 # TODO: feedback errors into LLM and ask to regenerate
                 errors.append(e)
-                pass
+                continue
 
         raise Exception(
             f"Could not generate data after {len(errors)} attempts!:\n{errors}"
