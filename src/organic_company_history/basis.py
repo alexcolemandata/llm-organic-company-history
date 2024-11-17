@@ -7,7 +7,8 @@ from pandera.polars import DataFrameModel
 from .polars_llm import PolarsLLM
 
 NUM_EMPLOYEES = 5
-MIN_UNIQUE_PAYCODES = 18
+MIN_UNIQUE_PAYCODES = 10
+FTE_HOURS_PER_WEEK = 35
 
 
 class HR(DataFrameModel):
@@ -51,14 +52,14 @@ hr_expert = PolarsLLM(
     expertise="Knitting and HR data",
     schema=HR,
     reply_parser=lambda df: df.with_columns(pl.col("hire_date").str.to_date()),
-    message=f"Generate data for {NUM_EMPLOYEES} employees for a knitting company",
+    questioner=f"Generate data for {NUM_EMPLOYEES} employees for a knitting company",
 )
 
 paycode_definitions_expert = PolarsLLM(
     name="ac-knitting-paycode",
     expertise="Payroll Systems and Administration",
     schema=PayrollDefinitions,
-    message=(
+    questioner=(
         "Generate a paycode mapping file that we can use to set up a "
         "payroll system for a knitting company. This should include all paycodes "
         "we would expect to pay to our employees. Different leave types should use "
@@ -74,14 +75,16 @@ payroll_expert = PolarsLLM(
         pl.col("hours").cast(pl.Float64, strict=False),
         pl.col("amount").cast(pl.Float64, strict=False),
     ),
-    message=lambda contract_type, job_title, paycode_listing: (
-        f"Generate a single monthly payrun for an employee with "
-        f"{contract_type=}, {job_title=}.\n\nThe payroll codes "
-        f"and description (split by category) are as follows:\n{paycode_listing}"
+    questioner=lambda contract_type, job_title, weekly_hours, paycode_listing: (
+        f"Generate one week's worth of payroll data for a {contract_type} {job_title} "
+        f"who works {weekly_hours} hours per week. "
+        f"Only use pay_codes from the following list:\n{paycode_listing}"
     ),
 )
 
-hr_data = hr_expert.get_dataframe()
+hr_data = hr_expert.get_dataframe().with_columns(
+    pl.col("fte").mul(FTE_HOURS_PER_WEEK).alias("weekly_hours")
+)
 print(f"\n\nhr_data:\n{hr_data}")
 
 paycode_data = paycode_definitions_expert.get_dataframe()
@@ -91,6 +94,7 @@ payroll_dfs = [
     payroll_expert.get_dataframe(
         contract_type=row["contract_type"],
         job_title=row["job_title"],
+        weekly_hours=row["weekly_hours"],
         paycode_listing=format_paycode_data_as_listing(paycode_data),
     ).with_columns(pl.lit(row["employee_code"]).alias("employee_code"))
     for row in hr_data.rows(named=True)
