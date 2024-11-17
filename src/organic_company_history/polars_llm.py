@@ -165,7 +165,7 @@ class PolarsLLM:
         return set(self.schema.to_schema().columns.keys())
 
     def check_reply_columns(self, reply: str) -> ColumnCheck:
-        reply_cols: set[str] = set(reply.split("\n")[0].replace('"', "").split(","))
+        reply_cols: set[str] = set(reply.lower().split("\n")[0].replace('"', "").split(","))
         expected_cols = self.schema_cols
 
         return ColumnCheck(
@@ -180,6 +180,11 @@ def format_modelfile(base_model: str, system_msg: str) -> str:
 
 
 def polars_from_csv_string(csv_string: str) -> pl.DataFrame:
+
+    # make first row lowercase as the column names are there
+    first_line, newline, rest = csv_string.partition("\n")
+    csv_string = first_line.lower() + newline + rest
+
     bytes_data = BytesIO(bytes(csv_string.strip(), "utf-8"))
 
     raw_df = pl.read_csv(bytes_data)
