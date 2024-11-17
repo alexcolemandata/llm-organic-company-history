@@ -185,7 +185,8 @@ class PolarsLLM:
 
             answer = str(func(**kwargs))
 
-            print(f"{self.name} uses tool: {func.__name__}({kwargs}) -> {answer}")
+            formatted_kwargs = ", ".join([f"{kwarg}={repr(value)}" for kwarg, value in kwargs.items()])
+            print(f"{self.name} tool: {func.__name__}({formatted_kwargs}): {answer}")
 
             self.message_history.append({
                 "role": "tool",
