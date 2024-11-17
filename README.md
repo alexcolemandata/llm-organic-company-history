@@ -2,11 +2,6 @@
 
 A learning project to see how llms can work within a python environment.
 
-## Idea: Organically Create a Company History using LLM agents
-
-construct a history of a company using llms, in a 'stage-based' approach which
-simulates the passage of time
-
 ## Demo: Generating Data for an Occult Detective Agency
 
 The 'main' script accepts the 'industry' as an input argument when run from the
