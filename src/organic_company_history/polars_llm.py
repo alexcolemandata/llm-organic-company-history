@@ -12,6 +12,7 @@ from pandera.polars import DataFrameModel
 import polars.selectors as cs
 
 
+DEFAULT_BASE_MODEL = "llama3.1"
 
 DEFAULT_MAX_CORRECTIONS = 3
 """Number of attempts to correct the generated CSV using feedback"""
@@ -19,7 +20,6 @@ DEFAULT_MAX_CORRECTIONS = 3
 DEFAULT_MAX_RETRIES = 3
 """Number of complete retries"""
 
-DEFAULT_BASE_MODEL = "llama3.1"
 
 SYSTEM_MESSAGE_CSV_REQS = (
     "Provide responses as 'csv' format only. "
@@ -109,16 +109,21 @@ class PolarsLLM:
     def send_chat_message(self, message:str) -> Mapping[str, Any]:
         formatted_message = self.format_user_message(message)
         self.message_history.append(formatted_message)
-        return ollama.chat(
+
+        response = ollama.chat(
             model=self.name,
             messages=self.message_history + [formatted_message]
         )
+
+        self.message_history.append(response)
+        return response
 
     def format_user_message(self, message: str) -> Message:
         return {"role": "user", "content": message}
 
 
     def generate_data(self, **kwargs) -> pl.DataFrame:
+        self.message_history = []
         errors = []
         question = self.questioner(**kwargs)
         while len(errors) <= DEFAULT_MAX_RETRIES:
@@ -126,7 +131,6 @@ class PolarsLLM:
             while num_corrections <= DEFAULT_MAX_CORRECTIONS:
                 response = self.send_chat_message(question)
                 response_message = response["message"]
-                self.message_history.append(response_message)
                 reply = response_message["content"]
 
                 column_check = self.check_reply_columns(reply)
