@@ -88,16 +88,23 @@ hr_data = hr_expert.get_dataframe().with_columns(
 )
 print(f"\n\nhr_data:\n{hr_data}")
 
-paycode_data = paycode_definitions_expert.get_dataframe()
+paycode_data = paycode_definitions_expert.get_dataframe().with_columns(
+    pl.col("pay_code").str.to_uppercase()
+)
 print(f"\n\npaycode_data:\n{paycode_data}")
 
 payroll_dfs = [
-    payroll_expert.get_dataframe(
-        contract_type=row["contract_type"],
-        job_title=row["job_title"],
-        weekly_hours=row["weekly_hours"],
-        paycode_listing=format_paycode_data_as_listing(paycode_data),
-    ).with_columns(pl.lit(row["employee_code"]).alias("employee_code"))
+    (
+        payroll_expert.get_dataframe(
+            contract_type=row["contract_type"],
+            job_title=row["job_title"],
+            weekly_hours=row["weekly_hours"],
+            paycode_listing=format_paycode_data_as_listing(paycode_data),
+        ).with_columns(
+            pl.lit(row["employee_code"]).alias("employee_code"),
+            pl.col("pay_code").str.to_uppercase(),
+        )
+    )
     for row in hr_data.rows(named=True)
 ]
 
