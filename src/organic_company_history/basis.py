@@ -107,6 +107,8 @@ timesheeter = PolarsLLM(
         f"{weekly_hours} per week. "
         "The 'weekday' column should use values like 'Monday', 'Tuesday', 'Saturday', etc. "
         f"Only use time_codes from the following list: \n{time_codes}"
+        "Employees can use multiple time_codes in one day, these should be split over many rows. "
+        "There should be no more than 12 hours total each day."
     ),
 )
 
