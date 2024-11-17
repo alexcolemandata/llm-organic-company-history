@@ -27,7 +27,7 @@ class HR(DataFrameModel):
 class Payroll(DataFrameModel):
     pay_code: pa.String
     hours: float = pa.Field(nullable=True)
-    amount: float = pa.Field(nullable=True)
+    amount: float
 
     class Config:
         coerce = True
@@ -62,7 +62,8 @@ paycode_definitions_expert = PolarsLLM(
     questioner=(
         "Generate a paycode mapping file that we can use to set up a "
         "payroll system for a knitting company. This should include all paycodes "
-        "we would expect to pay to our employees. Different leave types should use "
+        "we would expect to pay to our employees. Include codes for ordinary, "
+        "overtime, and holiday rates. Different leave types should use "
         f"different paycodes. There should be at least {MIN_UNIQUE_PAYCODES} different paycodes."
     ),
 )
