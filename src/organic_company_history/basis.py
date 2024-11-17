@@ -9,7 +9,7 @@ from .polars_llm import PolarsLLM
 NUM_EMPLOYEES = 5
 MIN_UNIQUE_PAYCODES = 10
 MIN_UNIQUE_TIMECODES = 8
-MIN_PRODUCTS = 30
+MIN_PRODUCTS = 8
 FTE_HOURS_PER_WEEK = 35
 
 
@@ -89,8 +89,8 @@ paycode_definitions_expert = PolarsLLM(
         "Generate a paycode mapping file that we can use to set up a "
         "payroll system for a knitting company. This should include all paycodes "
         "we would expect to pay to our employees. Include codes for ordinary, "
-        "overtime, and holiday rates. Different leave types should use "
-        f"different paycodes. There should be at least {MIN_UNIQUE_PAYCODES} different paycodes."
+        "overtime, and holiday rates. Different leave types should use different pay codes. "
+        f"There should be at least {MIN_UNIQUE_PAYCODES} different paycodes."
     ),
 )
 
@@ -116,7 +116,8 @@ timesheeter = PolarsLLM(
         f"{weekly_hours} per week. "
         "The 'weekday' column should use values like 'Monday', 'Tuesday', 'Saturday', etc. "
         f"Only use time_codes from the following list: \n{time_codes}"
-        "Employees can use multiple time_codes in one day, these should be split over many rows. "
+        "If an employee works multiple time codes in one day, they should be on "
+        "separate rows. "
         "There should be no more than 12 hours total each day."
     ),
 )
@@ -134,6 +135,7 @@ payroll_expert = PolarsLLM(
         f"Generate one week's worth of payroll data for a {contract_type} {job_title} "
         f"who works {weekly_hours} hours per week. "
         f"Only use pay_codes from the following list:\n{paycode_listing}"
+        "Avoid having multiple rows with the same 'pay_code' or 'amount' values"
     ),
 )
 
@@ -144,7 +146,8 @@ product_expert = PolarsLLM(
     questioner=(
         "Generate a variety of products our knitting company can sell on our "
         "website and eBay store. It should have a good mix of different items, styles "
-        f" and themes. Generate at least {MIN_PRODUCTS} different products."
+        " and themes. The 'product_description' field should be kept to one sentance. "
+        f"Generate at least {MIN_PRODUCTS} different products."
     ),
 )
 
