@@ -13,6 +13,7 @@ NUM_EMPLOYEES = 3
 MIN_UNIQUE_PAYCODES = 5
 MIN_UNIQUE_TIMECODES = 5
 MIN_PRODUCTS = 4
+MAX_TIMESHEETS = 5
 FTE_HOURS_PER_WEEK = 35
 
 
@@ -167,15 +168,14 @@ def init_experts(industry: str) -> Experts:
             expertise=f"Filling in timesheets for employees in a {industry} company.",
             schema=Timesheets,
             questioner=lambda job_title, time_codes, weekly_hours: (
-                f"Fill in 1 week of timesheets for a {job_title} who works roughly "
+                f"Fill in 3 days of timesheets for a {job_title} who works roughly "
                 f"{weekly_hours} per week. "
                 "The 'weekday' column should use values like 'Monday', 'Tuesday', "
                 "'Saturday', etc. "
-                f"Only use time_codes from the following list: \n{time_codes} "
-                "Do not include the description in the 'time_code' field. "
+                f"Only use time_codes from the following list: \n{time_codes} ."
                 "If an employee works multiple time codes in one day, they should be on "
                 "separate rows. "
-                "There should be no more than 12 hours total each day."
+                f"Do not produce more than {MAX_TIMESHEETS} rows."
             ),
             tools=[get_number_of_hours_worked_for_day],
         ),
@@ -218,6 +218,30 @@ def generate_data(experts: Experts) -> GeneratedData:
     )
     print(hr)
 
+    print("\n\ngenerating timesheet_codes...")
+    timesheet_codes = experts.timesheet_admin.get_dataframe(
+        job_titles=",".join(hr["job_title"])
+    )
+    print(timesheet_codes)
+
+    print("\n\ngenerating timesheets...")
+    timesheet_dfs = [
+        (
+            experts.timesheet_data_entry.get_dataframe(
+                job_title=row["job_title"],
+                weekly_hours=row["weekly_hours"],
+                time_codes=format_code_description_as_listing(
+                    timesheet_codes,
+                    code="time_code",
+                    description="time_code_description",
+                ),
+            ).with_columns(pl.lit(row["employee_code"]).alias("employee_code"))
+        )
+        for row in hr.rows(named=True)
+    ]
+    timesheets = pl.concat(timesheet_dfs)
+    print(timesheets)
+
     print("\n\ngenerating payroll_definitions...")
     payroll_definitions = experts.payroll_admin.get_dataframe()
     print(payroll_definitions)
@@ -242,30 +266,6 @@ def generate_data(experts: Experts) -> GeneratedData:
     ]
     payroll = pl.concat(payroll_dfs)
     print(payroll)
-
-    print("\n\ngenerating timesheet_codes...")
-    timesheet_codes = experts.timesheet_admin.get_dataframe(
-        job_titles=",".join(hr["job_title"])
-    )
-    print(timesheet_codes)
-
-    print("\n\ngenerating timesheets...")
-    timesheet_dfs = [
-        (
-            experts.timesheet_data_entry.get_dataframe(
-                job_title=row["job_title"],
-                weekly_hours=row["weekly_hours"],
-                time_codes=format_code_description_as_listing(
-                    timesheet_codes,
-                    code="time_code",
-                    description="time_code_description",
-                ),
-            ).with_columns(pl.lit(row["employee_code"]).alias("employee_code"))
-        )
-        for row in hr.rows(named=True)
-    ]
-    timesheets = pl.concat(timesheet_dfs)
-    print(timesheets)
 
     print("\n\ngenerating products...")
     products = experts.product_expert.get_dataframe()
