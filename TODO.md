@@ -13,7 +13,9 @@
 -   [ ] improve timesheet generation speed
 -   [ ] add pre-commit + format everything
 -   [ ] token/context limit monitoring
--   [ ] suppress sqllite logs
+-   [x] suppress sqllite logs
+-   [ ] ability to prune/preserve history for repeated dataframe calls
+-   [ ] split out llm/sqlite class from polarsllm
 
 ## Experiment With
 
