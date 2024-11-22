@@ -37,9 +37,10 @@ SYSTEM_MESSAGE_CSV_REQS = (
     "Provide responses as 'csv' format only. "
     "Don't include any text that is not part of the CSV. "
     "All dates should be in YYYY-MM-DD format. "
-    "Ensure all fields have values. There should be no consecutive commas. "
     "Ensure all values are able to be coerced into that field's data type. "
     "Boolean fields should use the values true and false. "
+    "Do not include commas in values, they should only be used as a delimiter. "
+    "Do not use quotation marks. "
 )
 
 
@@ -244,7 +245,9 @@ class PolarsLLM:
             num_attempts += 1
             question = self.questioner(**kwargs)
             if num_attempts >= 1:
-                logger.warning(f"{num_attempts=}, restarting conversation")
+                logger.warning(
+                    f"could not generate data after {DEFAULT_RETRIES}, restarting conversation"
+                )
                 self.start_conversation()
 
             num_retries = -1
@@ -254,7 +257,7 @@ class PolarsLLM:
 
                 if num_retries >= 1:
                     logger.warning(
-                        f"{num_retries=}\n\nreply:\n{reply}\n\nfollow up question: {question}"
+                        f"bad attempt! {num_attempts=}, {num_retries=}\n\nreply:\n{reply}\n\nfollow up question: {question}"
                     )
                 else:
                     logger.info(f"question: {question}")
@@ -307,7 +310,9 @@ class PolarsLLM:
 
                 try:
                     result = self.parse_reply(polars_from_csv_string(reply))
-                    logger.info(f"success! generated: {result}")
+                    logger.info(
+                        f"success after {num_retries=}, {num_attempts=}! generated: {result}"
+                    )
                     return result
 
                 except Exception as e:
