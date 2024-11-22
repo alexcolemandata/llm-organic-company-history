@@ -1,3 +1,4 @@
+from loguru import logger
 from typing import Type, Callable, Any, Sequence
 import ollama
 from ollama._types import Message, Tool
@@ -89,7 +90,7 @@ class PolarsLLM:
         self.modelfile = self.make_modelfile()
 
         ollama.create(model=name, modelfile=self.modelfile)
-        print(f"created model {name} using {base_model}")  # TODO: convert to logs
+        logger.info(f"created model {name} using {base_model}")  # TODO: convert to logs
 
     def __repr__(self) -> str:
         return f"<PolarsLLM(name={self.name})>"
@@ -181,7 +182,7 @@ class PolarsLLM:
             try:
                 func = self.tools[call["function"]["name"]]
             except KeyError:
-                print(f"LLM tried calling a non-existant tool: {call['function']['name']}: {call}")
+                logger.error(f"LLM tried calling a non-existant tool: {call['function']['name']}: {call}")
                 continue
 
             kwargs = call["function"]["arguments"]
@@ -190,7 +191,7 @@ class PolarsLLM:
                 continue
 
             formatted_kwargs = ", ".join([f"{kwarg}={repr(value)}" for kwarg, value in kwargs.items()])
-            print(f"used tool: {func.__name__}({formatted_kwargs}): ", end="")
+            formatted_call = f"{func.__name__}({formatted_kwargs})"
             try:
                 answer = str(func(**kwargs))
             except TypeError as e:
@@ -200,7 +201,8 @@ class PolarsLLM:
                     "role": "tool",
                     "content": str(e)
                 })
-                print(f"error!\n\t{e}")
+                logger.error(f"attempted to use tool: {formatted_call}: error!")
+                logger.error(e)
                 response = ollama.chat(
                     model=self.name,
                     messages=self.message_history
@@ -208,7 +210,7 @@ class PolarsLLM:
                 self.message_history.append(response)
                 return response
 
-            print(f"{answer}")
+            logger.debug(f"used tool: {formatted_call}: {answer}")
 
             self.message_history.append({
                 "role": "tool",

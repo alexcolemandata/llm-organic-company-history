@@ -1,5 +1,6 @@
 """python -m organic_company_history.basis"""
 import polars as pl
+from loguru import logger
 import pandera as pa
 from typing import NamedTuple
 from functools import lru_cache
@@ -212,19 +213,19 @@ def init_experts(industry: str) -> Experts:
 
 
 def generate_data(experts: Experts) -> GeneratedData:
-    print("\n\ngenerating hr...")
+    logger.info("generating hr...")
     hr = experts.hr.get_dataframe().with_columns(
         pl.col("fte").mul(FTE_HOURS_PER_WEEK).alias("weekly_hours")
     )
-    print(hr)
+    logger.info(hr)
 
-    print("\n\ngenerating timesheet_codes...")
+    logger.info("generating timesheet_codes...")
     timesheet_codes = experts.timesheet_admin.get_dataframe(
         job_titles=",".join(hr["job_title"])
     )
-    print(timesheet_codes)
+    logger.info(timesheet_codes)
 
-    print("\n\ngenerating timesheets...")
+    logger.info("generating timesheets...")
     timesheet_dfs = [
         (
             experts.timesheet_data_entry.get_dataframe(
@@ -240,13 +241,13 @@ def generate_data(experts: Experts) -> GeneratedData:
         for row in hr.rows(named=True)
     ]
     timesheets = pl.concat(timesheet_dfs)
-    print(timesheets)
+    logger.info(timesheets)
 
-    print("\n\ngenerating payroll_definitions...")
+    logger.info("generating payroll_definitions...")
     payroll_definitions = experts.payroll_admin.get_dataframe()
-    print(payroll_definitions)
+    logger.info(payroll_definitions)
 
-    print("\n\ngenerating payroll...")
+    logger.info("generating payroll...")
     payroll_dfs = [
         (
             experts.payroll_data_entry.get_dataframe(
@@ -265,11 +266,11 @@ def generate_data(experts: Experts) -> GeneratedData:
         for row in hr.rows(named=True)
     ]
     payroll = pl.concat(payroll_dfs)
-    print(payroll)
+    logger.info(payroll)
 
-    print("\n\ngenerating products...")
+    logger.info("generating products...")
     products = experts.product_expert.get_dataframe()
-    print(products)
+    logger.info(products)
 
     return GeneratedData(
         hr=hr,
