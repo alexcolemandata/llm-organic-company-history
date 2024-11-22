@@ -105,7 +105,11 @@ class PolarsLLM:
 
         try:
             ollama.create(model=name, modelfile=modelfile)
+            logger.info(f"created model={name} with {modelfile=}")
         except ollama.ResponseError as e:
+            # sometimes have gotten error due to model already existing - but
+            # have not been able to reproduce - might have to handle deleting
+            # existing model at some point?
             breakpoint()
 
         logger.info(f"created model {name} using {base_model}")  # TODO: convert to logs
