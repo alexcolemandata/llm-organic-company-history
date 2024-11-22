@@ -11,7 +11,8 @@ dependencies = [
     "ollama>=0.3.3",
     "polars-lts-cpu>=1.12.0",
     "pandera[polars]>=0.20.4",
-    "loguru>=0.7.2"
+    "loguru>=0.7.2",
+    "sqlalchemy-2.0.36",
 ]
 
 [project.optional-dependencies]
@@ -19,6 +20,7 @@ dev = [
     "ipython",
     "ipdb",
     "pdbpp",
+    "datasette",
 ]
 
 [build-system]

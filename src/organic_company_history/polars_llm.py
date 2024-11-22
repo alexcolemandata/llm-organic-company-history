@@ -1,7 +1,6 @@
-from loguru import logger
-from typing import Type, Callable, Any, Sequence
+from typing import Type, Callable, Any, Sequence, Literal
 import ollama
-from ollama._types import Message, Tool
+from ollama._types import Message, Tool, BaseGenerateResponse
 from collections.abc import Mapping
 import string
 import polars as pl
@@ -9,6 +8,8 @@ from typing import NamedTuple
 from io import BytesIO
 from pandera.polars import DataFrameModel
 import polars.selectors as cs
+from . import database
+from loguru import logger
 
 
 DEFAULT_BASE_MODEL = "llama3.1"
@@ -30,10 +31,13 @@ SYSTEM_MESSAGE_CSV_REQS = (
 )
 
 
+Role = Literal["user", "assistant", "system", "tool"]
+
 class ColumnCheck(NamedTuple):
     correct: set[str]
     missing: set[str]
     extra: set[str]
+
 
 class CSVFormatError(Exception): 
     """Raised when the LLM has generated an invalid CSV"""
@@ -44,8 +48,8 @@ class CSVFormatError(Exception):
         super().__init__(*args, **kwargs)
 
 
-
 class PolarsLLM:
+    """A LLM which (attempts) to return polars dataframes as responses."""
     name: str
     base_model: str
     expertise: str
@@ -59,6 +63,10 @@ class PolarsLLM:
 
     modelfile: str
 
+    # orm things, super messy
+    orm_model: database.Model
+    orm_conversation: database.Conversation
+
     def __init__(
         self,
         name: str,
@@ -68,12 +76,11 @@ class PolarsLLM:
         reply_parser: Callable[[pl.DataFrame], pl.DataFrame] | None = None,
         base_model: str = DEFAULT_BASE_MODEL,
         tools: list[Callable] = list()
-    ):
+    ) -> None:
         self.name = name
         self.schema = schema
         self.expertise = expertise
         self.base_model = base_model
-        self.message_history = list()
         self.tools = {tool.__name__: tool for tool in tools}
         self.formatted_tools = self.format_tools()
 
@@ -91,6 +98,43 @@ class PolarsLLM:
 
         ollama.create(model=name, modelfile=self.modelfile)
         logger.info(f"created model {name} using {base_model}")  # TODO: convert to logs
+
+        # janky orm things
+        model = database.Model(
+            name=name,
+            base_model=base_model,
+        )
+        database.session.add(model)
+        database.session.commit()
+        self.orm_model = model
+
+        self.start_conversation()
+
+
+    def start_conversation(self) -> None:
+        """Start a new conversation with message history"""
+        self.message_history = []
+        conversation = database.Conversation(model_id=self.orm_model.id)
+        database.session.add(conversation)
+        database.session.commit()
+        self.orm_conversation = conversation
+
+    def record_message(self, msg: Message) -> None:
+        self.message_history.append(msg)
+
+        if "content" in msg:
+            message = database.Message(
+                conversation_id=self.orm_conversation.id,
+                role=msg["role"],
+                content=msg["content"]
+            )
+        else:
+            breakpoint()
+            return None
+
+        database.session.add(message)
+        database.session.commit()
+        return None
 
     def __repr__(self) -> str:
         return f"<PolarsLLM(name={self.name})>"
@@ -110,25 +154,29 @@ class PolarsLLM:
     def parse_reply(self, reply: pl.DataFrame) -> pl.DataFrame:
         return self.reply_parser(reply).select(self.schema_cols).pipe(self.schema)
 
-    def send_chat_message(self, message:str) -> Mapping[str, Any]:
-        formatted_message = self.format_user_message(message)
-        self.message_history.append(formatted_message)
+
+    def get_response(self) -> Mapping[str, Any]:
 
         response = ollama.chat(
             model=self.name,
-            messages=self.message_history + [formatted_message],
+            messages=self.message_history,
             tools=self.formatted_tools
         )
+        self.record_message(response["message"])
 
-        self.message_history.append(response)
         return response
+
+    def send_message(self, role: Role, message:str) -> Mapping[str, Any]:
+        formatted_message = self.format_message(role=role, message=message)
+        self.record_message(formatted_message)
+
+        return self.get_response()
 
     def format_tools(self) -> Sequence[Tool]:
         return [format_tool(tool) for tool in self.tools.values()]
 
-    def format_user_message(self, message: str) -> Message:
-        return {"role": "user", "content": message}
-
+    def format_message(self, role: Role, message: str) -> Message:
+        return {"role": role, "content": message}
 
     def generate_data(self, **kwargs) -> pl.DataFrame:
         self.message_history = []
@@ -137,7 +185,7 @@ class PolarsLLM:
         while len(errors) <= DEFAULT_MAX_RETRIES:
             num_corrections = 0
             while num_corrections <= DEFAULT_MAX_CORRECTIONS:
-                response = self.send_chat_message(question)
+                response = self.send_message('user', question)
 
                 if response["message"].get("tool_calls"):
                     response = self.use_tools(response["message"]["tool_calls"])
@@ -197,17 +245,11 @@ class PolarsLLM:
             except TypeError as e:
                 # This error is usually due to the llm passing in a list for functions
                 # that only take a single value
-                self.message_history.append({
-                    "role": "tool",
-                    "content": str(e)
-                })
+                response = self.send_message('tool', message=str(e))
+
                 logger.error(f"attempted to use tool: {formatted_call}: error!")
                 logger.error(e)
-                response = ollama.chat(
-                    model=self.name,
-                    messages=self.message_history
-                )
-                self.message_history.append(response)
+
                 return response
 
             logger.debug(f"used tool: {formatted_call}: {answer}")
