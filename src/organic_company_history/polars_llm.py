@@ -14,9 +14,6 @@ from loguru import logger
 
 DEFAULT_BASE_MODEL = "llama3.1"
 
-DEFAULT_MAX_CORRECTIONS = 3
-"""Number of attempts to correct the generated CSV using feedback"""
-
 DEFAULT_MAX_RETRIES = 3
 """Number of complete retries"""
 
@@ -33,14 +30,16 @@ SYSTEM_MESSAGE_CSV_REQS = (
 
 Role = Literal["user", "assistant", "system", "tool"]
 
+
 class ColumnCheck(NamedTuple):
     correct: set[str]
     missing: set[str]
     extra: set[str]
 
 
-class CSVFormatError(Exception): 
+class CSVFormatError(Exception):
     """Raised when the LLM has generated an invalid CSV"""
+
     column_check: ColumnCheck
 
     def __init__(self, *args, column_check: ColumnCheck, **kwargs) -> None:
@@ -50,22 +49,19 @@ class CSVFormatError(Exception):
 
 class PolarsLLM:
     """A LLM which (attempts) to return polars dataframes as responses."""
+
     name: str
-    base_model: str
     expertise: str
     schema: Type[DataFrameModel]
     reply_parser: Callable[[pl.DataFrame], pl.DataFrame]
     questioner: Callable[..., str]
-    tools: dict[str, Callable]
     formatted_tools: Sequence[Tool]
-
-    message_history: list[Message]
 
     modelfile: str
 
-    # orm things, super messy
-    orm_model: database.Model
-    orm_conversation: database.Conversation
+    model: database.Model
+    current_conversation: database.Conversation
+    callable_tools: dict[str, Callable]
 
     def __init__(
         self,
@@ -75,14 +71,11 @@ class PolarsLLM:
         questioner: str | Callable[..., str],
         reply_parser: Callable[[pl.DataFrame], pl.DataFrame] | None = None,
         base_model: str = DEFAULT_BASE_MODEL,
-        tools: list[Callable] = list()
+        tools: list[Callable] = list(),
     ) -> None:
         self.name = name
         self.schema = schema
         self.expertise = expertise
-        self.base_model = base_model
-        self.tools = {tool.__name__: tool for tool in tools}
-        self.formatted_tools = self.format_tools()
 
         if reply_parser is None:
             self.reply_parser = lambda df: df
@@ -94,39 +87,61 @@ class PolarsLLM:
         else:
             self.questioner = questioner
 
-        self.modelfile = self.make_modelfile()
+        modelfile = self.make_modelfile(base_model=base_model)
 
-        ollama.create(model=name, modelfile=self.modelfile)
+        ollama.create(model=name, modelfile=modelfile)
         logger.info(f"created model {name} using {base_model}")  # TODO: convert to logs
+        logger.debug(f"{name}.Modelfile\n{modelfile}")
 
         # janky orm things
-        model = database.Model(
-            name=name,
-            base_model=base_model,
-        )
+        model = database.Model(name=name, base_model=base_model, modelfile=modelfile)
+
         database.session.add(model)
         database.session.commit()
-        self.orm_model = model
+        self.model = model
 
+        self.init_tools(tools)
+        self.formatted_tools = self.format_tools()
         self.start_conversation()
 
+    @property
+    def latest_message(self) -> database.Message:
+        return self.current_conversation.messages[-1]
+
+    @property
+    def message_history(self) -> list[Message]:
+        return [
+            {"role": message.role, "content": message.content}
+            for message in self.current_conversation.messages
+        ]
+
+    def init_tools(self, tools: list[Callable]) -> None:
+        self.callable_tools = {tool.__name__: tool for tool in tools}
+        for tool in tools:
+            orm_tool = database.Tool(
+                model_id=self.model.id,
+                name=tool.__name__,
+                docstring=tool.__doc__,
+                annotations=str(tool.__annotations__),
+                is_hallucination=False,
+            )
+            database.session.add(orm_tool)
+        database.session.commit()
 
     def start_conversation(self) -> None:
         """Start a new conversation with message history"""
-        self.message_history = []
-        conversation = database.Conversation(model_id=self.orm_model.id)
+        logger.debug(f"{self} Starting new conversation")
+        conversation = database.Conversation(model_id=self.model.id)
         database.session.add(conversation)
         database.session.commit()
-        self.orm_conversation = conversation
+        self.current_conversation = conversation
 
     def record_message(self, msg: Message) -> None:
-        self.message_history.append(msg)
-
         if "content" in msg:
             message = database.Message(
-                conversation_id=self.orm_conversation.id,
+                conversation_id=self.current_conversation.id,
                 role=msg["role"],
-                content=msg["content"]
+                content=msg["content"] or "",
             )
         else:
             breakpoint()
@@ -139,135 +154,200 @@ class PolarsLLM:
     def __repr__(self) -> str:
         return f"<PolarsLLM(name={self.name})>"
 
-    def make_modelfile(self):
+    def make_modelfile(self, base_model: str):
         system_msg = (
             f"You are an expert in {self.expertise}. "
             f"{SYSTEM_MESSAGE_CSV_REQS}"
             f"The fields and data types required are: {format_pandera_model_as_instruction(self.schema)}"
         )
 
-        return format_modelfile(base_model=self.base_model, system_msg=system_msg)
-
-    def get_dataframe(self, **kwargs) -> pl.DataFrame:
-        return self.generate_data(**kwargs)
+        return format_modelfile(base_model=base_model, system_msg=system_msg)
 
     def parse_reply(self, reply: pl.DataFrame) -> pl.DataFrame:
         return self.reply_parser(reply).select(self.schema_cols).pipe(self.schema)
 
-
     def get_response(self) -> Mapping[str, Any]:
-
         response = ollama.chat(
-            model=self.name,
-            messages=self.message_history,
-            tools=self.formatted_tools
+            model=self.name, messages=self.message_history, tools=self.formatted_tools
         )
         self.record_message(response["message"])
+        self.record_response(response)  # response holds the metadata of the message
 
         return response
 
-    def send_message(self, role: Role, message:str) -> Mapping[str, Any]:
+    def record_response(self, response: Mapping[str, Any]) -> None:
+        database.session.add(
+            database.Response(
+                **{
+                    field: value
+                    for field, value in response.items()
+                    if field
+                    in [
+                        "done_reason",
+                        "eval_count",
+                        "eval_duration",
+                        "load_duration",
+                        "prompt_eval_count",
+                        "prompt_eval_duration",
+                        "total_duration",
+                    ]
+                },
+                message_id=self.current_conversation.messages[-1].id,
+            )
+        )
+        database.session.commit()
+        return None
+
+    def send_message(self, role: Role, message: str) -> Mapping[str, Any]:
         formatted_message = self.format_message(role=role, message=message)
         self.record_message(formatted_message)
 
         return self.get_response()
 
     def format_tools(self) -> Sequence[Tool]:
-        return [format_tool(tool) for tool in self.tools.values()]
+        return [format_tool(tool) for tool in self.callable_tools.values()]
 
     def format_message(self, role: Role, message: str) -> Message:
         return {"role": role, "content": message}
 
-    def generate_data(self, **kwargs) -> pl.DataFrame:
-        self.message_history = []
-        errors = []
+    def generate_data(
+        self, start_new_conversation: bool = False, **kwargs
+    ) -> pl.DataFrame:
+        if start_new_conversation and (len(self.current_conversation.messages) > 0):
+            self.start_conversation()
+
         question = self.questioner(**kwargs)
-        while len(errors) <= DEFAULT_MAX_RETRIES:
-            num_corrections = 0
-            while num_corrections <= DEFAULT_MAX_CORRECTIONS:
-                response = self.send_message('user', question)
+        num_retries = -1
+        reply = ""
+        while num_retries <= DEFAULT_MAX_RETRIES:
+            num_retries += 1
 
-                if response["message"].get("tool_calls"):
-                    response = self.use_tools(response["message"]["tool_calls"])
+            if num_retries > 1:
+                logger.warning(
+                    f"{num_retries=}\n\nreply:\n{reply}\n\nfollow up question: {question}"
+                )
+            else:
+                logger.info(f"question: {question}")
 
-                response_message = response["message"]
-                reply = format_first_line_of_csv(response_message["content"])
+            response = self.send_message("user", question)
 
-                column_check = self.check_reply_columns(reply)
+            if response["message"].get("tool_calls"):
+                response = self.use_tools(response["message"]["tool_calls"])
 
-                if not column_check.correct:
-                    question = (
-                        "That didn't include any valid column names in the first row. "
-                        f"Expected: {self.schema_cols}"
-                    )
-                    num_corrections += 1
-                    continue
+            response_message = response["message"]
+            reply = format_first_line_of_csv(response_message["content"])
 
-                if column_check.missing:
-                    question = (
-                        f"The following column names were not found in the first row: {column_check.missing}. "
-                    )
+            column_check = self.check_reply_columns(reply)
 
-                    if column_check.extra:
-                        question += f"Additionally the following column names were not recognized: {column_check.extra}"
+            if not column_check.correct:
+                question = (
+                    "The first row did not look correct. "
+                    f"It should only have the column names: {self.schema_cols}"
+                )
+                continue
 
-                    num_corrections += 1
-                    continue
+            if column_check.missing:
+                question = f"That was incorrect. The first row was missing these columns: {column_check.missing}. "
 
-                try:
-                    return self.parse_reply(polars_from_csv_string(reply))
-                except Exception as e:
-                    # TODO: feedback errors into LLM and ask to regenerate
-                    errors.append(e)
-                    continue
+                if column_check.extra:
+                    # this might confuse it, telling the model only the wrong
+                    # columns seems to be more reliable?
+                    # question += f"Additionally the following column names were not recognized: {column_check.extra}"
+                    pass
 
-        raise Exception(
-            f"Could not generate data after {len(errors)} attempts!:\n{'\n'.join(errors)}"
+                continue
+
+            try:
+                return self.parse_reply(polars_from_csv_string(reply))
+            except Exception as e:
+                question = str(e)
+                continue
+
+        raise Exception(f"Could not generate data for {self.model.name}")
+
+    def get_tool(self, name: str) -> database.Tool:
+        tool = database.session.query(database.Tool).filter_by(name=name).first()
+
+        if not tool:
+            # llm hallucinated for the first time, create it
+            tool = database.Tool(
+                model_id=self.model.id, name=name, is_hallucination=True
+            )
+            database.session.add(tool)
+            database.session.commit()
+
+        return tool
+
+    def record_hallucinated_tool_call(
+        self, tool: database.Tool, call_args: dict
+    ) -> None:
+        breakpoint()
+
+        return None
+
+    def use_tool(self, name: str, call_args: dict) -> None:
+        tool = self.get_tool(name)
+
+        tool_call = database.ToolCall(
+            tool_id=tool.id,
+            arguments=call_args,
+            message_id=self.latest_message.id,
         )
+        database.session.add(tool_call)
+        database.session.commit()
+
+        # special case if hallucinated
+        if tool.is_hallucination:
+            tool_result = database.ToolResult(
+                call_id=tool_call.id, was_error=True, value_or_error="Hallucination"
+            )
+
+            database.session.add(tool_result)
+            database.session.commit()
+            return None
+
+        # attempt to run tool
+        try:
+            result = self.callable_tools[name](**call_args)
+        except Exception as e:
+            tool_result = database.ToolResult(
+                call_id=tool_call.id, was_error=True, value_or_error=str(e)
+            )
+        else:
+            tool_result = database.ToolResult(
+                call_id=tool_call.id, was_error=False, value_or_error=str(result)
+            )
+
+        database.session.add(tool_result)
+        database.session.commit()
+        return None
 
     def use_tools(self, calls=list[dict]) -> Message:
         for call in calls:
-            try:
-                func = self.tools[call["function"]["name"]]
-            except KeyError:
-                logger.error(f"LLM tried calling a non-existant tool: {call['function']['name']}: {call}")
-                continue
+            self.use_tool(
+                name=call["function"]["name"], call_args=call["function"]["arguments"]
+            )
 
-            kwargs = call["function"]["arguments"]
-            if not isinstance(kwargs, dict):
-                breakpoint()
-                continue
-
-            formatted_kwargs = ", ".join([f"{kwarg}={repr(value)}" for kwarg, value in kwargs.items()])
-            formatted_call = f"{func.__name__}({formatted_kwargs})"
-            try:
-                answer = str(func(**kwargs))
-            except TypeError as e:
-                # This error is usually due to the llm passing in a list for functions
-                # that only take a single value
-                response = self.send_message('tool', message=str(e))
-
-                logger.error(f"attempted to use tool: {formatted_call}: error!")
-                logger.error(e)
-
-                return response
-
-            logger.debug(f"used tool: {formatted_call}: {answer}")
-
-            self.message_history.append({
-                "role": "tool",
-                "content": answer,
-            })
-
-        response = ollama.chat(
-            model=self.name,
-            messages=self.message_history,
-        )
-
-        self.message_history.append(response)
+        response = self.send_tool_results()
 
         return response
 
+    def send_tool_results(self) -> Mapping[str, Any]:
+        calls = database.session.query(database.ToolCall).filter_by(
+            message_id=self.latest_message.id
+        )
+
+        formatted_responses = []
+        for call in calls:
+            name = call.tool.name
+            formatted_args = ", ".join(
+                f"{k}={repr(v)}" for k, v in call.arguments.items()
+            )
+            formatted_responses.append(
+                f"{name}({formatted_args}) = {call.result.value_or_error}"
+            )
+
+        return self.send_message(role="tool", message="\n".join(formatted_responses))
 
     @property
     def schema_cols(self) -> set[str]:
@@ -278,9 +358,9 @@ class PolarsLLM:
         expected_cols = self.schema_cols
 
         return ColumnCheck(
-            correct = expected_cols & reply_cols,
-            missing = expected_cols - reply_cols,
-            extra = reply_cols - expected_cols
+            correct=expected_cols & reply_cols,
+            missing=expected_cols - reply_cols,
+            extra=reply_cols - expected_cols,
         )
 
 
@@ -289,9 +369,9 @@ def format_modelfile(base_model: str, system_msg: str) -> str:
 
 
 def polars_from_csv_string(csv_string: str) -> pl.DataFrame:
-    bytes_data = BytesIO(bytes(csv_string.strip(), "utf-8"))
+    bytes_data = BytesIO(bytes(csv_string.partition("\n\n")[0].strip(), "utf-8"))
 
-    raw_df = pl.read_csv(bytes_data)
+    raw_df = pl.read_csv(bytes_data, ignore_errors=True, truncate_ragged_lines=True)
 
     return raw_df.with_columns(
         cs.string().map_batches(lambda s: s.str.strip_chars(" '\""))
@@ -309,13 +389,22 @@ def format_pandera_model_as_instruction(model: Type[DataFrameModel]) -> str:
 
     return result
 
+
 def format_first_line_of_csv(csv_string: str) -> str:
     """Formats the first line to be lower_case_with_underscores - fixes some easy mistakes"""
     first_line, newline, rest = csv_string.partition("\n")
-    return first_line.lower().strip().replace(" ", "_").replace('"', "") + newline + rest
+    return (
+        first_line.lower()
+        .strip()
+        .removeprefix("<|python_tag|>")
+        .replace(" ", "_")
+        .replace('"', "")
+        + newline
+        + rest
+    )
+
 
 def format_tool(func: Callable) -> Tool:
-
     properties = format_tool_properties(func)
 
     return {
@@ -326,9 +415,9 @@ def format_tool(func: Callable) -> Tool:
             "parameters": {
                 "type": "object",
                 "properties": properties,
-                "required": list(properties.keys())
-            }
-        }
+                "required": list(properties.keys()),
+            },
+        },
     }
 
 
@@ -366,4 +455,3 @@ def format_tool_properties(func: Callable) -> dict:
         )
 
     return tool_properties
-

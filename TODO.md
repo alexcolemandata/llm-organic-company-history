@@ -13,6 +13,7 @@
 -   [ ] improve timesheet generation speed
 -   [ ] add pre-commit + format everything
 -   [ ] token/context limit monitoring
+-   [ ] suppress sqllite logs
 
 ## Experiment With
 
