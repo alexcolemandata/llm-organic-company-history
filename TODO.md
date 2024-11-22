@@ -20,3 +20,4 @@
 ## Experiment With
 
 -   [x] tools - Completed: added basic api for defining tools (parsing docstring is a bit cheesy tho)
+-   [ ] json as llm generated format (llms are potentially better are structuring json?)
