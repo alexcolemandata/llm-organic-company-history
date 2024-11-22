@@ -7,15 +7,30 @@ import polars as pl
 from typing import NamedTuple
 from io import BytesIO
 from pandera.polars import DataFrameModel
+from pandera.errors import SchemaErrors
 import polars.selectors as cs
 from . import database
 from loguru import logger
 
+import sys
+
+logger.remove()
+
+# Add a new handler for INFO+ messages while keeping level-specific coloring
+logger.add(
+    sys.stdout,
+    format="<green>{time:HH:mm:ss}</green> | <level>{level: <8}</level> | <cyan>{module}</cyan> - <level>{message}</level>",
+    level="INFO",  # Only log INFO and above
+    colorize=True,  # Keep level-specific coloring
+)
 
 DEFAULT_BASE_MODEL = "llama3.1"
 
-DEFAULT_MAX_RETRIES = 3
-"""Number of complete retries"""
+DEFAULT_ATTEMPTS = 2
+"""Number of times to completely do over regeneration (if retries dont work)"""
+
+DEFAULT_RETRIES = 3
+"""Number of retries to regenerate a valid dataframe (using feedback)"""
 
 
 SYSTEM_MESSAGE_CSV_REQS = (
@@ -164,7 +179,15 @@ class PolarsLLM:
         return format_modelfile(base_model=base_model, system_msg=system_msg)
 
     def parse_reply(self, reply: pl.DataFrame) -> pl.DataFrame:
-        return self.reply_parser(reply).select(self.schema_cols).pipe(self.schema)
+        parsed = self.reply_parser(reply).select(self.schema_cols)
+        try:
+            validated = self.schema(parsed)
+        except SchemaErrors as e:
+            breakpoint()
+
+            raise e
+
+        return validated
 
     def get_response(self) -> Mapping[str, Any]:
         response = ollama.chat(
@@ -216,52 +239,80 @@ class PolarsLLM:
         if start_new_conversation and (len(self.current_conversation.messages) > 0):
             self.start_conversation()
 
-        question = self.questioner(**kwargs)
-        num_retries = -1
-        reply = ""
-        while num_retries <= DEFAULT_MAX_RETRIES:
-            num_retries += 1
+        num_attempts = -1
+        while num_attempts < DEFAULT_ATTEMPTS:
+            num_attempts += 1
+            question = self.questioner(**kwargs)
+            if num_attempts >= 1:
+                logger.warning(f"{num_attempts=}, restarting conversation")
+                self.start_conversation()
 
-            if num_retries > 1:
-                logger.warning(
-                    f"{num_retries=}\n\nreply:\n{reply}\n\nfollow up question: {question}"
-                )
-            else:
-                logger.info(f"question: {question}")
+            num_retries = -1
+            reply = ""
+            while num_retries < DEFAULT_RETRIES:
+                num_retries += 1
 
-            response = self.send_message("user", question)
+                if num_retries >= 1:
+                    logger.warning(
+                        f"{num_retries=}\n\nreply:\n{reply}\n\nfollow up question: {question}"
+                    )
+                else:
+                    logger.info(f"question: {question}")
 
-            if response["message"].get("tool_calls"):
-                response = self.use_tools(response["message"]["tool_calls"])
+                response = self.send_message("user", question)
 
-            response_message = response["message"]
-            reply = format_first_line_of_csv(response_message["content"])
+                if response["message"].get("tool_calls"):
+                    response = self.use_tools(response["message"]["tool_calls"])
 
-            column_check = self.check_reply_columns(reply)
+                response_message = response["message"]
 
-            if not column_check.correct:
-                question = (
-                    "The first row did not look correct. "
-                    f"It should only have the column names: {self.schema_cols}"
-                )
-                continue
+                # if response has multiple paragraphs, assume that csv is the largest
+                # one
+                response_segments = response_message["content"].split("\n\n")
+                response_segment = ""
+                for segment in response_segments:
+                    if len(segment) > len(response_segment):
+                        response_segment = segment
 
-            if column_check.missing:
-                question = f"That was incorrect. The first row was missing these columns: {column_check.missing}. "
+                reply = format_first_line_of_csv(response_segment)
 
-                if column_check.extra:
-                    # this might confuse it, telling the model only the wrong
-                    # columns seems to be more reliable?
-                    # question += f"Additionally the following column names were not recognized: {column_check.extra}"
-                    pass
+                column_check = self.check_reply_columns(reply)
 
-                continue
+                if not column_check.correct:
+                    question = (
+                        "The first row did not look correct. "
+                        f"It should only have the column names: {','.join(self.schema_cols)}"
+                    )
+                    continue
 
-            try:
-                return self.parse_reply(polars_from_csv_string(reply))
-            except Exception as e:
-                question = str(e)
-                continue
+                if column_check.missing:
+                    question = f"That was incorrect. The first row was missing these columns: {column_check.missing}. "
+
+                    if column_check.extra:
+                        # this might confuse it, telling the model only the wrong
+                        # columns seems to be more reliable?
+                        # question += f"Additionally the following column names were not recognized: {column_check.extra}"
+                        pass
+
+                    continue
+
+                lines = reply.splitlines()
+                if any([line.startswith(",") for line in lines]):
+                    question = "There were some lines that started with a comma, this is incorrect"
+                    continue
+
+                if any([line.count('"') % 2 for line in lines]):
+                    question = "There were some lines with an odd number of quotation marks, please only quote string fields."
+                    continue
+
+                try:
+                    result = self.parse_reply(polars_from_csv_string(reply))
+                    logger.info(f"success! generated: {result}")
+                    return result
+
+                except Exception as e:
+                    question = str(e)
+                    continue
 
         raise Exception(f"Could not generate data for {self.model.name}")
 
@@ -369,9 +420,11 @@ def format_modelfile(base_model: str, system_msg: str) -> str:
 
 
 def polars_from_csv_string(csv_string: str) -> pl.DataFrame:
-    bytes_data = BytesIO(bytes(csv_string.partition("\n\n")[0].strip(), "utf-8"))
+    csv_table = csv_string.strip().replace("  ", " ").replace(", ", ",")
 
-    raw_df = pl.read_csv(bytes_data, ignore_errors=True, truncate_ragged_lines=True)
+    bytes_data = BytesIO(bytes(csv_table, "utf-8"))
+
+    raw_df = pl.read_csv(bytes_data)
 
     return raw_df.with_columns(
         cs.string().map_batches(lambda s: s.str.strip_chars(" '\""))
@@ -396,6 +449,7 @@ def format_first_line_of_csv(csv_string: str) -> str:
     return (
         first_line.lower()
         .strip()
+        .removeprefix("```csv")
         .removeprefix("<|python_tag|>")
         .replace(" ", "_")
         .replace('"', "")

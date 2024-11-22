@@ -10,11 +10,11 @@ from pandera.polars import DataFrameModel
 
 from .polars_llm import PolarsLLM
 
-NUM_EMPLOYEES = 3
-MIN_UNIQUE_PAYCODES = 5
-MIN_UNIQUE_TIMECODES = 5
+NUM_EMPLOYEES = 5
+MIN_UNIQUE_PAYCODES = 8
+MIN_UNIQUE_TIMECODES = 6
 MIN_PRODUCTS = 4
-MAX_TIMESHEETS = 5
+MAX_TIMESHEETS = 6
 FTE_HOURS_PER_WEEK = 35
 
 
@@ -213,11 +213,9 @@ def generate_data(experts: Experts) -> GeneratedData:
     hr = experts.hr.generate_data().with_columns(
         pl.col("fte").mul(FTE_HOURS_PER_WEEK).alias("weekly_hours")
     )
-    logger.info(hr)
 
     logger.info("generating timesheet_codes...")
     timesheet_codes = experts.timesheet_admin.generate_data(job_titles=hr["job_title"])
-    logger.info(timesheet_codes)
 
     logger.info("generating timesheets...")
     timesheet_dfs = [
@@ -238,7 +236,6 @@ def generate_data(experts: Experts) -> GeneratedData:
 
     logger.info("generating payroll_definitions...")
     payroll_definitions = experts.payroll_admin.generate_data()
-    logger.info(payroll_definitions)
 
     logger.info("generating payroll...")
     payroll_dfs = [
@@ -262,7 +259,6 @@ def generate_data(experts: Experts) -> GeneratedData:
 
     logger.info("generating products...")
     products = experts.product_expert.generate_data()
-    logger.info(products)
 
     return GeneratedData(
         hr=hr,

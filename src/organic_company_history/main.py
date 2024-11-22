@@ -1,7 +1,6 @@
 """Generate and print data for a few silly industries"""
 import argparse
 from os import get_terminal_size
-
 from .basis import make_data_for_industry, GeneratedData
 
 HLINE = "-" * get_terminal_size().columns
