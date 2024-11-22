@@ -406,11 +406,16 @@ class PolarsLLM:
         formatted_responses = []
         for call in calls:
             name = call.tool.name
+            result = call.result
+            if result.is_hallucination:
+                # dont provide results from hallucinated tools
+                continue
+
             formatted_args = ", ".join(
                 f"{k}={repr(v)}" for k, v in call.arguments.items()
             )
             formatted_responses.append(
-                f"{name}({formatted_args}) = {call.result.value_or_error}"
+                f"{name}({formatted_args}) = {result.value_or_error}"
             )
 
         return self.send_message(role="tool", message="\n".join(formatted_responses))
