@@ -1,13 +1,11 @@
 from typing import Type, Callable, Any, Sequence
 import ollama
-from ollama._types import Message, Tool, ToolCall
+from ollama._types import Message, Tool
 from collections.abc import Mapping
 import string
 import polars as pl
 from typing import NamedTuple
 from io import BytesIO
-import pandera as pa
-from pandera.typing import DataFrame, Series
 from pandera.polars import DataFrameModel
 import polars.selectors as cs
 
