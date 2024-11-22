@@ -7,7 +7,7 @@ import polars as pl
 from typing import NamedTuple
 from io import BytesIO
 from pandera.polars import DataFrameModel
-from pandera.errors import SchemaErrors
+from pandera.errors import SchemaErrors, SchemaError
 import polars.selectors as cs
 from . import database
 from loguru import logger
@@ -39,8 +39,6 @@ SYSTEM_MESSAGE_CSV_REQS = (
     "All dates should be in YYYY-MM-DD format. "
     "Ensure all values are able to be coerced into that field's data type. "
     "Boolean fields should use the values true and false. "
-    "Do not include commas in values, they should only be used as a delimiter. "
-    "Do not use quotation marks. "
 )
 
 
@@ -105,7 +103,11 @@ class PolarsLLM:
 
         modelfile = self.make_modelfile(base_model=base_model)
 
-        ollama.create(model=name, modelfile=modelfile)
+        try:
+            ollama.create(model=name, modelfile=modelfile)
+        except ollama.ResponseError as e:
+            breakpoint()
+
         logger.info(f"created model {name} using {base_model}")  # TODO: convert to logs
         logger.debug(f"{name}.Modelfile\n{modelfile}")
 
@@ -180,15 +182,7 @@ class PolarsLLM:
         return format_modelfile(base_model=base_model, system_msg=system_msg)
 
     def parse_reply(self, reply: pl.DataFrame) -> pl.DataFrame:
-        parsed = self.reply_parser(reply).select(self.schema_cols)
-        try:
-            validated = self.schema(parsed)
-        except SchemaErrors as e:
-            breakpoint()
-
-            raise e
-
-        return validated
+        return self.reply_parser(reply).select(self.schema_cols)
 
     def get_response(self) -> Mapping[str, Any]:
         response = ollama.chat(
@@ -289,7 +283,7 @@ class PolarsLLM:
                     continue
 
                 if column_check.missing:
-                    question = f"That was incorrect. The first row was missing these columns: {column_check.missing}. "
+                    question = f"That was incorrect. The first row was missing these columns: {', '.join(column_check.missing)}. "
 
                     if column_check.extra:
                         # this might confuse it, telling the model only the wrong
@@ -309,14 +303,30 @@ class PolarsLLM:
                     continue
 
                 try:
-                    result = self.parse_reply(polars_from_csv_string(reply))
+                    parsed = self.parse_reply(polars_from_csv_string(reply))
+                except pl.exceptions.ComputeError as e:
+                    if "truncate_ragged_lines" in str(e):
+                        question = "Some lines had an incorrect amount of delimiters!"
+                    else:
+                        breakpoint()
+                        question = str(e)
+
+                    continue
+
+                except Exception as e:
+                    breakpoint()
+                    question = str(e)
+                    continue
+
+                try:
+                    result = self.schema.validate(parsed, lazy=True)
                     logger.info(
                         f"success after {num_retries=}, {num_attempts=}! generated: {result}"
                     )
                     return result
 
-                except Exception as e:
-                    question = str(e)
+                except SchemaErrors as e:
+                    question = "\n".join(str(err) for err in e.schema_errors)
                     continue
 
         raise Exception(f"Could not generate data for {self.model.name}")
