@@ -167,8 +167,6 @@ def init_experts(industry: str) -> Experts:
             questioner=lambda job_title, time_code_csv, weekly_hours: (
                 f"Fill in 3 days of timesheets for a {job_title} who works roughly "
                 f"{weekly_hours} per week. "
-                "The 'weekday' column should use values like 'Monday', 'Tuesday', "
-                "'Saturday', etc. "
                 f"Only use time_codes from the following dataset: \n{time_code_csv}\n"
                 "If an employee works multiple time codes in one day, they should be on "
                 "separate rows. "
