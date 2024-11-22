@@ -181,6 +181,7 @@ class PolarsLLM:
             try:
                 func = self.tools[call["function"]["name"]]
             except KeyError:
+                print(f"LLM tried calling a non-existant tool: {call['function']['name']}: {call}")
                 continue
 
             kwargs = call["function"]["arguments"]
@@ -188,10 +189,26 @@ class PolarsLLM:
                 breakpoint()
                 continue
 
-            answer = str(func(**kwargs))
-
             formatted_kwargs = ", ".join([f"{kwarg}={repr(value)}" for kwarg, value in kwargs.items()])
-            print(f"used tool: {func.__name__}({formatted_kwargs}): {answer}")
+            print(f"used tool: {func.__name__}({formatted_kwargs}): ", end="")
+            try:
+                answer = str(func(**kwargs))
+            except TypeError as e:
+                # This error is usually due to the llm passing in a list for functions
+                # that only take a single value
+                self.message_history.append({
+                    "role": "tool",
+                    "content": str(e)
+                })
+                print(f"error!\n\t{e}")
+                response = ollama.chat(
+                    model=self.name,
+                    messages=self.message_history
+                )
+                self.message_history.append(response)
+                return response
+
+            print(f"{answer}")
 
             self.message_history.append({
                 "role": "tool",
