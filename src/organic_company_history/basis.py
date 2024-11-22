@@ -154,26 +154,22 @@ def init_experts(industry: str) -> Experts:
             name=f"{name_prefix}/timesheet-admin",
             expertise=f"{industry.title()} and configuring Timesheeting systems",
             schema=TimesheetCodes,
-            reply_parser=lambda df: df.with_columns(
-                pl.col("time_code").str.to_uppercase()
-            ),
             questioner=lambda job_titles: (
                 f"Generate a CSV a {industry} company can use to configure a "
-                "timesheeting system so that employees can log their time for all "
-                f"their activities. The current list of job titles is: {job_titles}. "
-                f"There should be at least {MIN_UNIQUE_TIMECODES} different time codes."
+                f"timesheet system. The current list of job titles is: {', '.join(job_titles)}. "
+                f"There should be at least {MIN_UNIQUE_TIMECODES} different time codes. "
             ),
         ),
         timesheet_data_entry=PolarsLLM(
             name=f"{name_prefix}/timesheet-peon",
             expertise=f"Filling in timesheets for employees in a {industry} company.",
             schema=Timesheets,
-            questioner=lambda job_title, time_codes, weekly_hours: (
+            questioner=lambda job_title, time_code_csv, weekly_hours: (
                 f"Fill in 3 days of timesheets for a {job_title} who works roughly "
                 f"{weekly_hours} per week. "
                 "The 'weekday' column should use values like 'Monday', 'Tuesday', "
                 "'Saturday', etc. "
-                f"Only use time_codes from the following list: \n{time_codes} ."
+                f"Only use time_codes from the following dataset: \n{time_code_csv}\n"
                 "If an employee works multiple time codes in one day, they should be on "
                 "separate rows. "
                 f"Do not produce more than {MAX_TIMESHEETS} rows."
@@ -189,10 +185,10 @@ def init_experts(industry: str) -> Experts:
                 pl.col("hours").cast(pl.Float64, strict=False),
                 pl.col("amount").cast(pl.Float64, strict=False),
             ),
-            questioner=lambda contract_type, job_title, weekly_hours, paycode_listing: (
+            questioner=lambda contract_type, job_title, weekly_hours, paycode_csv: (
                 f"Generate one week's worth of payroll data for a {contract_type} {job_title} "
                 f"who works {weekly_hours} hours per week. "
-                f"Only use pay_codes from the following list:\n{paycode_listing}"
+                f"Only use pay_codes from the following dataset:\n{paycode_csv}\n"
                 "Avoid having multiple rows with the same 'pay_code' or 'amount' values"
             ),
             tools=[get_typical_monthly_salary_for_job_title],
@@ -214,28 +210,25 @@ def init_experts(industry: str) -> Experts:
 
 def generate_data(experts: Experts) -> GeneratedData:
     logger.info("generating hr...")
-    hr = experts.hr.get_dataframe().with_columns(
+    hr = experts.hr.generate_data().with_columns(
         pl.col("fte").mul(FTE_HOURS_PER_WEEK).alias("weekly_hours")
     )
     logger.info(hr)
 
     logger.info("generating timesheet_codes...")
-    timesheet_codes = experts.timesheet_admin.get_dataframe(
-        job_titles=",".join(hr["job_title"])
-    )
+    timesheet_codes = experts.timesheet_admin.generate_data(job_titles=hr["job_title"])
     logger.info(timesheet_codes)
 
     logger.info("generating timesheets...")
     timesheet_dfs = [
         (
-            experts.timesheet_data_entry.get_dataframe(
+            experts.timesheet_data_entry.generate_data(
+                start_new_conversation=True,
                 job_title=row["job_title"],
                 weekly_hours=row["weekly_hours"],
-                time_codes=format_code_description_as_listing(
-                    timesheet_codes,
-                    code="time_code",
-                    description="time_code_description",
-                ),
+                time_code_csv=timesheet_codes[
+                    ["time_code", "time_code_description"]
+                ].write_csv(),
             ).with_columns(pl.lit(row["employee_code"]).alias("employee_code"))
         )
         for row in hr.rows(named=True)
@@ -244,21 +237,20 @@ def generate_data(experts: Experts) -> GeneratedData:
     logger.info(timesheets)
 
     logger.info("generating payroll_definitions...")
-    payroll_definitions = experts.payroll_admin.get_dataframe()
+    payroll_definitions = experts.payroll_admin.generate_data()
     logger.info(payroll_definitions)
 
     logger.info("generating payroll...")
     payroll_dfs = [
         (
-            experts.payroll_data_entry.get_dataframe(
+            experts.payroll_data_entry.generate_data(
+                start_new_conversation=True,
                 contract_type=row["contract_type"],
                 job_title=row["job_title"],
                 weekly_hours=row["weekly_hours"],
-                paycode_listing=format_code_description_as_listing(
-                    payroll_definitions,
-                    code="pay_code",
-                    description="pay_code_description",
-                ),
+                paycode_csv=payroll_definitions[
+                    ["pay_code", "pay_code_description"]
+                ].write_csv(),
             ).with_columns(
                 pl.lit(row["employee_code"]).alias("employee_code"),
             )
@@ -269,7 +261,7 @@ def generate_data(experts: Experts) -> GeneratedData:
     logger.info(payroll)
 
     logger.info("generating products...")
-    products = experts.product_expert.get_dataframe()
+    products = experts.product_expert.generate_data()
     logger.info(products)
 
     return GeneratedData(
