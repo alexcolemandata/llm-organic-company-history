@@ -1,10 +1,10 @@
 """python -m organic_company_history.basis"""
 import polars as pl
 from loguru import logger
-import pandera as pa
 from typing import NamedTuple
 from functools import lru_cache
 import random
+import pandera as pa
 from pandera.typing import DataFrame
 from pandera.polars import DataFrameModel
 
@@ -50,13 +50,23 @@ class PayrollDefinitions(DataFrameModel):
 
 
 class TimesheetCodes(DataFrameModel):
-    time_code: pa.String
+    time_code: pa.String = pa.Field(unique=True)
     time_code_description: pa.String
     time_category: pa.String
 
 
 class Timesheets(DataFrameModel):
-    weekday: pa.String
+    weekday: pa.String = pa.Field(
+        isin=[
+            "Monday",
+            "Tuesday",
+            "Wednesday",
+            "Thursday",
+            "Friday",
+            "Saturday",
+            "Sunday",
+        ]
+    )
     time_code: pa.String
     hours: float
 
@@ -154,16 +164,23 @@ def init_experts(industry: str) -> Experts:
             name=f"{name_prefix}/timesheet-admin",
             expertise=f"{industry.title()} and configuring Timesheeting systems",
             schema=TimesheetCodes,
+            reply_parser=lambda df: df.with_columns(
+                pl.col("time_code").cast(pl.String)
+            ),
             questioner=lambda job_titles: (
                 f"Generate a CSV a {industry} company can use to configure a "
                 f"timesheet system. The current list of job titles is: {', '.join(job_titles)}. "
                 f"There should be at least {MIN_UNIQUE_TIMECODES} different time codes. "
+                "time_code should be short and unique."
             ),
         ),
         timesheet_data_entry=PolarsLLM(
             name=f"{name_prefix}/timesheet-peon",
             expertise=f"Filling in timesheets for employees in a {industry} company.",
             schema=Timesheets,
+            reply_parser=lambda df: df.with_columns(
+                pl.col("time_code").cast(pl.String)
+            ),
             questioner=lambda job_title, time_code_csv, weekly_hours: (
                 f"Fill in 3 days of timesheets for a {job_title} who works roughly "
                 f"{weekly_hours} per week. "
