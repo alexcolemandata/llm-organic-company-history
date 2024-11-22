@@ -136,7 +136,7 @@ def init_experts(industry: str) -> Experts:
         ),
         payroll_admin=PolarsLLM(
             name=f"{name_prefix}/payroll-admin",
-            expertise="Payroll Systems and Administration",
+            expertise=f"Payroll Systems for {industry.title()}",
             schema=PayrollDefinitions,
             reply_parser=lambda df: df.with_columns(
                 pl.col("pay_code").str.to_uppercase()
