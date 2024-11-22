@@ -5,6 +5,7 @@
 -   [ ] convert prints to logging
 -   [ ] conversation api (reset messages/increment conversation id/ etc)
 -   [ ] preserve conversations as sqllite
+    -   [ ] load/save state from sqllite
 -   [ ] fix typing hell with pandera schemas/etc
     -   [ ] convert pandera to object-based api
 -   [ ] use same model for multiple experts, (maintain separate message histories)
