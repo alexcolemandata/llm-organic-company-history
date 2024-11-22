@@ -2,7 +2,7 @@
 
 ## Tasks
 
--   [ ] convert prints to logging
+-   [x] convert prints to logging
 -   [ ] conversation api (reset messages/increment conversation id/ etc)
 -   [ ] preserve conversations as sqllite
     -   [ ] load/save state from sqllite
@@ -10,6 +10,8 @@
     -   [ ] convert pandera to object-based api
 -   [ ] use same model for multiple experts, (maintain separate message histories)
 -   [ ] feedback api, for refining results via deterministic functions
+-   [ ] improve timesheet generation speed
+-   [ ] add pre-commit + format everything
 
 ## Experiment With
 
